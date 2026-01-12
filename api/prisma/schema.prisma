@@ -1,0 +1,224 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  STAFF
+}
+
+enum OrderStatus {
+  RECEIVED
+  SORTING
+  WASHING
+  DRYING
+  IRONING
+  DRYCLEANING
+  STAIN_REMOVAL
+  READY
+  DELIVERED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  FINAL
+  PAID
+  VOID
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  OTHER
+}
+
+enum TurnaroundType {
+  NORMAL
+  ONE_DAY
+  EXPRESS
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  fullName     String
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(STAFF)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Customer {
+  id         Int     @id @default(autoincrement())
+  name       String
+  phone      String? @unique // unique for ACTIVE customers; old ones will be released (set to null)
+  address    String?
+  notes      String?
+  isArchived Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders Order[]
+}
+
+model CatalogCategory {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique // e.g. WDP, P, DC, ST, WD, DY, BNK
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items CatalogItem[]
+}
+
+model CatalogItem {
+  id              Int      @id @default(autoincrement())
+  categoryId      Int
+  itemCode        String   @unique // e.g. WDP/N3, P/NS2, DC/WSS4, ST/N, WD/WBS, DY, BNK/S
+  displayName     String // e.g. "Shirt/T-Shirt/Blouse (Normal)", "Curtain (1kg) Normal", etc.
+  unitType        String   @default("PCS") // PCS, KG, SET, etc.
+  basePrice       Decimal  @db.Decimal(10, 2)
+  defaultTatDays  Int      @default(3) // typical days shown in your sheet
+  supportsTatType Boolean  @default(false) // true for "P" that has NORMAL/ONE_DAY/EXPRESS
+  isActive        Boolean  @default(true)
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  category   CatalogCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  orderItems OrderItem[]
+
+  @@index([categoryId])
+}
+
+model OrderCounter {
+  id        Int      @id @default(autoincrement())
+  branch    String // "A" or "B"
+  yymmdd    String // "251215"
+  lastNo    Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([branch, yymmdd])
+  @@index([branch, yymmdd])
+}
+
+model Order {
+  id        Int    @id @default(autoincrement())
+  orderCode String @unique // NR-A-251215-0001
+  branch    String // A / B
+  yymmdd    String // 251215
+  runningNo Int
+
+  customerId Int?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  status    OrderStatus @default(RECEIVED)
+  notes     String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  // pricing snapshot totals
+  subtotal Decimal @default(0.00) @db.Decimal(10, 2)
+  discount Decimal @default(0.00) @db.Decimal(10, 2)
+  total    Decimal @default(0.00) @db.Decimal(10, 2)
+
+  items    OrderItem[]
+  invoices Invoice[]
+
+  @@index([branch])
+  @@index([yymmdd])
+  @@index([customerId])
+}
+
+model OrderItem {
+  id            Int  @id @default(autoincrement())
+  orderId       Int
+  catalogItemId Int?
+
+  // Snapshot fields: keep what was charged at the time
+  itemCode  String
+  itemName  String
+  unitType  String  @default("PCS")
+  qty       Decimal @default(1.00) @db.Decimal(10, 2)
+  unitPrice Decimal @default(0.00) @db.Decimal(10, 2)
+  lineTotal Decimal @default(0.00) @db.Decimal(10, 2)
+
+  // Turnaround / priority
+  tatType       TurnaroundType @default(NORMAL)
+  tatMultiplier Decimal        @default(1.000) @db.Decimal(6, 3) // e.g. 1.500 or 1.850
+  expectedDays  Int            @default(3)
+
+  // Tracking per item
+  itemNo        Int
+  itemLabelCode String      @unique // e.g. NR-A-251215-0001-03
+  itemStatus    OrderStatus @default(RECEIVED)
+  remarks       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  catalogItem  CatalogItem?  @relation(fields: [catalogItemId], references: [id], onDelete: SetNull)
+  // itemLabelCode already has @unique which creates an index; no need for @@index again
+  invoiceLines InvoiceLine[]
+
+  @@index([orderId])
+  @@index([itemCode])
+}
+
+model Invoice {
+  id        Int           @id @default(autoincrement())
+  invoiceNo String        @unique
+  orderId   Int
+  status    InvoiceStatus @default(DRAFT)
+
+  // ✅ NEW: invoice level turnaround + service charge
+  tatType       TurnaroundType @default(NORMAL)
+  serviceCharge Decimal        @default(0.00) @db.Decimal(10, 2)
+
+  // totals
+  subtotal   Decimal @default(0.00) @db.Decimal(10, 2)
+  discount   Decimal @default(0.00) @db.Decimal(10, 2)
+  total      Decimal @default(0.00) @db.Decimal(10, 2)
+  paidAmount Decimal @default(0.00) @db.Decimal(10, 2)
+  balance    Decimal @default(0.00) @db.Decimal(10, 2)
+
+  paymentMethod PaymentMethod @default(CASH)
+  paidAt        DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  order Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  lines InvoiceLine[]
+
+  @@index([orderId])
+}
+
+model InvoiceLine {
+  id          Int  @id @default(autoincrement())
+  invoiceId   Int
+  orderItemId Int?
+
+  itemCode    String
+  description String
+  qty         Decimal @default(1.00) @db.Decimal(10, 2)
+  unitPrice   Decimal @default(0.00) @db.Decimal(10, 2)
+  lineTotal   Decimal @default(0.00) @db.Decimal(10, 2)
+
+  invoice   Invoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  orderItem OrderItem? @relation(fields: [orderItemId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+}
