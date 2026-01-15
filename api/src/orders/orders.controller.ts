@@ -1,8 +1,20 @@
-import { Controller, Post, Body, Get, Param, Query, Patch } from "@nestjs/common";
+import {
+    Controller,
+    Post,
+    Body,
+    Get,
+    Param,
+    Query,
+    Patch,
+    UseGuards,
+    Req // ✅ Use 'Req' instead of 'Request' for Express types
+} from "@nestjs/common";
 import { OrdersService } from "./orders.service";
 import { TurnaroundType, OrderStatus } from "@prisma/client";
 import { InvoicesService } from "../invoices/invoices.service";
+import { JwtAuthGuard } from "../auth/jwt-auth.guard"; // ✅ Import Guard
 
+@UseGuards(JwtAuthGuard) // 🔒 Protects ALL endpoints in this file
 @Controller("orders")
 export class OrdersController {
     constructor(
@@ -17,7 +29,10 @@ export class OrdersController {
             branch: "A" | "B";
             customerName?: string;
             customerPhone?: string;
+            customerAddress?: string;
+            customerNotes?: string;
             notes?: string;
+            yymmdd?: string;
         },
     ) {
         return this.orders.createOrder(body);
@@ -37,9 +52,11 @@ export class OrdersController {
         @Query("branch") branch: "A" | "B",
         @Query("paid") paid?: string,
         @Query("status") status?: OrderStatus,
-        @Query("yymmdd") yymmdd?: string, // ✅ add this
+        @Query("yymmdd") yymmdd?: string,
+        @Req() req?: any, // ✅ Use @Req() and type as 'any' to stop TS errors
     ) {
-        return this.orders.listToday(branch, { paid, status, yymmdd });
+        // Pass the logged-in user to the service
+        return this.orders.listToday(branch, { paid, status, yymmdd }, req.user);
     }
 
     @Patch(":orderCode/status")
@@ -63,9 +80,14 @@ export class OrdersController {
         return this.orders.getOrder(orderCode);
     }
 
-    // ✅ updated: support branch filter optionally
+    // ✅ Updated: Secure Search
     @Get()
-    search(@Query("q") q: string, @Query("branch") branch?: "A" | "B") {
-        return this.orders.searchOrders(q, branch);
+    search(
+        @Query("q") q: string,
+        @Query("branch") branch: "A" | "B",
+        @Req() req: any // ✅ Inject User Request
+    ) {
+        // Pass the logged-in user to the service
+        return this.orders.searchOrders(q, branch, req.user);
     }
 }

@@ -22,17 +22,25 @@ const INVOICE_TAT_TYPES = ["NORMAL", "ONE_DAY", "EXPRESS"];
 // State
 // ---------------------------
 const state = {
-  branch: "A",
-  paid: "", // "" | "true" | "false"
-  status: "", // "" | OrderStatus
+  // Auth State
+  user: localStorage.getItem('userRole') ? {
+    role: localStorage.getItem('userRole'),
+    branch: localStorage.getItem('userBranch'),
+    name: localStorage.getItem('userName')
+  } : null,
+
+  // App State
+  branch: localStorage.getItem('userBranch') || "A", // Default to assigned branch
+  paid: "",
+  status: "",
   yymmdd: yymmddFromDate(new Date()),
 
   loading: false,
   orders: [],
   selectedOrderCode: null,
   selectedOrder: null,
-
   toast: null,
+  confirm: null,
   modal: null,
 
   // add item modal
@@ -135,6 +143,27 @@ function statusKind(s) {
   return "gray";
 }
 
+// ✅ Logic to map backend status to UI Label
+function getPaymentState(order) {
+  const s = order.invoiceStatus; // "NONE", "FINAL", "PAID", "VOID"
+  if (!s || s === 'NONE') return 'NO INV';
+  if (s === 'FINAL') return 'UNPAID'; // Map FINAL -> UNPAID for UI
+  return s; // PAID, VOID return as is
+}
+
+// ✅ Color mapping
+function invoiceStatusKind(status) {
+  switch (status) {
+    case 'PAID': return 'green';
+    case 'UNPAID': return 'yellow';
+    case 'FINAL': return 'yellow';
+    case 'NO INV': return 'blue';    // ✅ Blue for No Invoice
+    case 'NONE': return 'blue';
+    case 'VOID': return 'red';
+    default: return 'gray';
+  }
+}
+
 function paidKind(isPaid) {
   return isPaid ? "green" : "yellow";
 }
@@ -182,8 +211,8 @@ function icon(name, cls = "w-4 h-4") {
       return `<svg ${common}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`;
     case "invoice":
       return `<svg ${common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
-    case "pay":
-      return `<svg ${common}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`;
+    case "pay": // Generic Banknote (Currency Neutral)
+      return `<svg ${common}><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>`;
     case "home":
       return `<svg ${common}><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`;
     case "file-text": // Note
@@ -200,6 +229,8 @@ function icon(name, cls = "w-4 h-4") {
       return `<svg ${common}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
     case "chevron-down":
       return `<svg ${common}><polyline points="6 9 12 15 18 9"/></svg>`;
+    case "calendar":
+      return `<svg ${common}><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
     default:
       return "";
   }
@@ -467,9 +498,9 @@ async function printInvoice(invoiceNo) {
           </div>
         </div>
 
-        <div class="status-box">
+<div class="status-box">
           STATUS: ${orderStatus} <br>
-          PAYMENT: ${payStatus}
+          PAYMENT: ${payStatus === 'FINAL' ? 'UNPAID' : payStatus}
         </div>
 
         <div class="footer">
@@ -731,22 +762,41 @@ function layout() {
   return `
   <div class="min-h-screen bg-slate-50">
     ${toastUi()}
-    ${modalUi()}
+    ${confirmUi()} ${modalUi()}
 
-    <div class="border-b bg-white">
-      <div class="max-w-screen-2xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-3">
-        <div class="font-bold text-lg lg:text-xl">NRWashingPlus</div>
-        <div class="text-slate-500 text-sm lg:text-base">Counter Board</div>
+<div class="border-b bg-white">
+      <div class="max-w-screen-2xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center gap-4 sm:gap-3">
+        
+        <div class="w-full sm:w-auto flex flex-col items-center sm:items-start text-center sm:text-left">
+           <div class="font-bold text-lg lg:text-xl">NRWashingPlus</div>
+           <div class="text-slate-500 text-sm lg:text-base">Counter Board</div>
+        </div>
 
-        <div class="ml-auto flex items-center gap-2">
-          <button id="btnNewOrder" class="${btnPrimary("px-4 lg:px-5 flex items-center gap-2")}">
+        <div class="w-full sm:w-auto sm:ml-auto flex items-center justify-center sm:justify-end gap-2">
+          
+          <button id="btnNewOrder" class="${btnPrimary("flex-1 sm:flex-none px-4 lg:px-5 flex items-center justify-center gap-2")}">
             ${icon("plus", "w-4 h-4 lg:w-5 lg:h-5")}
             New Order
           </button>
 
-          <button id="btnRefresh" class="${btnGhost("px-4 lg:px-5 flex items-center gap-2")}">
+          <button id="btnRefresh" class="${btnGhost("flex-1 sm:flex-none px-4 lg:px-5 flex items-center justify-center gap-2")}">
             ${icon("refresh", "w-4 h-4 lg:w-5 lg:h-5")}
             Refresh
+          </button>
+
+${state.user?.role === 'ADMIN' ? `
+            <a href="/admin.html" class="flex-1 sm:flex-none h-11 lg:h-12 px-4 lg:px-5 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 text-sm lg:text-base font-semibold hover:bg-indigo-100 hover:border-indigo-300 transition flex items-center justify-center gap-2">
+              <svg class="w-4 h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              Admin Panel
+            </a>
+          ` : ''}
+
+<button id="btnLogout" class="h-11 px-3 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition flex flex-col items-end justify-center leading-tight">
+            <span>${state.user?.name || state.user?.role || 'GUEST'}</span>
+            <span class="font-normal text-[10px] opacity-75">Sign Out</span>
           </button>
         </div>
       </div>
@@ -768,28 +818,45 @@ function layout() {
             </div>
 
 <div class="flex flex-wrap lg:flex-nowrap gap-3 lg:gap-4 items-end ${state.searchQuery ? 'opacity-50 pointer-events-none' : ''}">
-              <div class="w-full sm:w-[14rem] lg:w-[15rem] shrink-0">
+              
+              <div class="w-full lg:w-[15rem] shrink-0">
                 <div class="${uiLabelClass()}">Date</div>
-                <input id="dateSelect" type="date"
-                  value="${dateInputValueFromYYMMDD(state.yymmdd)}"
-                  class="${uiDateClass()}" 
-                  ${state.searchQuery ? 'disabled' : ''} />
-              </div>
-
-              <div class="w-full sm:w-[10rem] lg:w-[6rem] shrink-0">
-                <div class="${uiLabelClass()}">Branch</div>
                 <div class="relative">
-                  <select id="branchSelect" class="${uiSelectClass()} appearance-none" ${state.searchQuery ? 'disabled' : ''}>
-                    <option value="A" ${state.branch === "A" ? "selected" : ""}>A</option>
-                    <option value="B" ${state.branch === "B" ? "selected" : ""}>B</option>
-                  </select>
+                  <input id="dateSelect" type="date"
+                    value="${dateInputValueFromYYMMDD(state.yymmdd)}"
+                    class="${uiDateClass()} appearance-none [&::-webkit-calendar-picker-indicator]:hidden" 
+                    ${state.searchQuery ? 'disabled' : ''} />
                   <div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
-                    ${icon("chevron-down", "w-4 h-4")}
+                    ${icon("calendar", "w-4 h-4")}
                   </div>
                 </div>
               </div>
 
-              <div class="w-full sm:w-[12rem] lg:w-[12rem] shrink-0">
+<div class="w-full sm:w-[10rem] lg:w-[6rem] shrink-0">
+                <div class="${uiLabelClass()}">Branch</div>
+                <div class="relative">
+                  <select id="branchSelect" class="${uiSelectClass()} appearance-none" 
+                    ${state.searchQuery ? 'disabled' : ''}
+                    ${state.user?.role === 'STAFF' ? 'disabled' : ''} 
+                  >
+                    ${(!state.user?.branch || state.user?.branch === 'A')
+      ? `<option value="A" ${state.branch === "A" ? "selected" : ""}>A</option>`
+      : ''
+    }
+                    
+                    ${(!state.user?.branch || state.user?.branch === 'B')
+      ? `<option value="B" ${state.branch === "B" ? "selected" : ""}>B</option>`
+      : ''
+    }
+                  </select>
+                  
+                  <div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
+                     ${state.user?.role === 'STAFF' ? icon("lock", "w-3 h-3") : icon("chevron-down", "w-4 h-4")}
+                  </div>
+                </div>
+              </div>
+
+              <div class="w-full sm:flex-1 lg:w-[12rem] shrink-0">
                 <div class="${uiLabelClass()}">Paid</div>
                 <div class="relative">
                   <select id="paidSelect" class="${uiSelectClass()} appearance-none" ${state.searchQuery ? 'disabled' : ''}>
@@ -803,14 +870,14 @@ function layout() {
                 </div>
               </div>
 
-              <div class="w-full sm:w-[12rem] lg:w-[12rem] shrink-0">
+              <div class="w-full sm:flex-1 lg:w-[12rem] shrink-0">
                 <div class="${uiLabelClass()}">Status</div>
                 <div class="relative">
                   <select id="statusSelect" class="${uiSelectClass()} appearance-none" ${state.searchQuery ? 'disabled' : ''}>
                     <option value="" ${statusVal === "" ? "selected" : ""}>All</option>
                     ${STATUS_OPTIONS.map(
-    (s) => `<option value="${s}" ${statusVal === s ? "selected" : ""}>${s}</option>`
-  ).join("")}
+      (s) => `<option value="${s}" ${statusVal === s ? "selected" : ""}>${s}</option>`
+    ).join("")}
                   </select>
                   <div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
                     ${icon("chevron-down", "w-4 h-4")}
@@ -820,7 +887,7 @@ function layout() {
 
             </div>
 
-<div class="mt-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+<div class="mt-3 flex flex-row items-center justify-between gap-2">
 <div class="text-[12px] lg:text-sm text-slate-600">
   ${state.searchQuery
       ? `<span class="text-indigo-600 font-bold">Search Results for: "${escapeHtml(state.searchQuery)}"</span>`
@@ -874,7 +941,9 @@ function layout() {
                         <td class="py-3 px-2">${o.itemCount}</td>
                         <td class="py-3 px-2 font-semibold">${money(o.total)}</td>
                         <td class="py-3 px-2">${badge(o.status, statusKind(o.status))}</td>
-                        <td class="py-3 px-2">${badge(o.isPaid ? "PAID" : "UNPAID", paidKind(o.isPaid))}</td>
+                        <td class="py-3 px-2">
+  ${badge(getPaymentState(o), invoiceStatusKind(getPaymentState(o)))}
+</td>
                       </tr>
                     `;
       })
@@ -885,7 +954,7 @@ function layout() {
         </div>
       </div>
 
-      <div class="col-span-12 lg:col-span-5">
+      <div class="col-span-12 lg:col-span-5" id="details-panel-container">
         <div class="bg-white rounded-2xl shadow-sm border p-4 lg:p-5 min-h-[260px]">
           ${detailsPanel()}
         </div>
@@ -939,9 +1008,9 @@ function detailsPanel() {
   }
 
   return `
-    <div class="flex items-start justify-between gap-2">
+    <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
       <div class="min-w-0">
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
           <span class="font-bold text-base lg:text-lg truncate">${escapeHtml(o.orderCode)}</span>
           ${invoiceNo ? `<span class="bg-emerald-100 text-emerald-800 text-xs px-2 py-1 rounded font-mono font-bold">${escapeHtml(invoiceNo)}</span>` : ''}
         </div>
@@ -950,8 +1019,17 @@ function detailsPanel() {
       <div class="flex gap-2 shrink-0">
         ${speedBadge} 
         ${badge(o.status, statusKind(o.status))}
-        ${badge(invoiceStatus, invoiceStatus === "PAID" ? "green" : "yellow")}
-      </div>
+        
+${(() => {
+      let label = "NO INV";
+      if (invoiceStatus === 'PAID') label = "PAID";
+      else if (invoiceStatus === 'FINAL') label = "UNPAID"; // Map FINAL -> UNPAID
+      else if (invoiceStatus === 'VOID') label = "VOID";
+
+      // Uses the helper you added: invoiceStatusKind
+      return badge(label, invoiceStatusKind(label));
+    })()}
+        </div>
     </div>
 
     <div class="mt-4 text-sm lg:text-base">
@@ -1061,8 +1139,8 @@ function detailsPanel() {
          Print Tags
       </button>
 
-      <button id="btnPayInvoice"
-        class="${btnSuccess(`w-full flex items-center justify-center gap-2 ${canPay ? "" : "opacity-50 pointer-events-none"}`)}">
+<button id="btnPayInvoice"
+        class="${btnSuccess(`w-full sm:col-span-2 flex items-center justify-center gap-2 ${canPay ? "" : "opacity-50 pointer-events-none"}`)}">
         ${icon("pay", "w-4 h-4 lg:w-5 lg:h-5")}
         Pay invoice
       </button>
@@ -1091,9 +1169,76 @@ function toastUi() {
   `;
 }
 
+// ✅ NEW: Confirmation Toast UI (Supports 'danger' type)
+function confirmUi() {
+  if (!state.confirm) return "";
+
+  // Decide button color based on type
+  const isDanger = state.confirm.type === 'danger';
+  const btnClass = isDanger
+    ? "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-200"
+    : "bg-slate-900 hover:bg-slate-800 text-white";
+
+  return `
+    <div class="fixed top-6 left-1/2 -translate-x-1/2 z-[110] animate-in fade-in slide-in-from-top-4 duration-200">
+      <div class="bg-white px-6 py-5 rounded-2xl shadow-2xl border border-slate-200 flex flex-col items-center gap-4 min-w-[320px]">
+        <div class="text-slate-800 font-semibold text-center text-sm leading-relaxed">
+          ${escapeHtml(state.confirm.msg)}
+        </div>
+        <div class="flex gap-3 w-full">
+          <button onclick="window.resolveConfirm(false)" class="flex-1 h-9 rounded-lg border border-slate-300 text-slate-600 text-xs font-bold hover:bg-slate-50 transition">
+            No, Keep it
+          </button>
+          <button onclick="window.resolveConfirm(true)" class="flex-1 h-9 rounded-lg text-xs font-bold transition shadow-md ${btnClass}">
+            ${isDanger ? 'Yes, Cancel Order' : 'Confirm'}
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="fixed inset-0 z-[100] bg-black/20 backdrop-blur-[1px]" onclick="window.resolveConfirm(false)"></div>
+  `;
+}
+
 function modalUi() {
   if (!state.modal) return "";
   const { type, data } = state.modal;
+
+  // Login Modal is special (cannot close, backdrop is solid)
+  // Login Modal (Blurry Background + Eye Icon)
+  if (type === "LOGIN") {
+    return `
+    <div class="fixed inset-0 z-[100] bg-slate-900/30 backdrop-blur-md flex items-center justify-center p-4">
+      <div class="w-full max-w-sm bg-white rounded-2xl shadow-2xl p-8 border border-white/20">
+        <div class="text-center mb-6">
+          <div class="font-bold text-2xl text-slate-900">NRWashingPlus</div>
+          <div class="text-slate-500 text-sm">System Login</div>
+        </div>
+        <div id="loginError" class="hidden mb-4 p-3 bg-rose-50 text-rose-700 text-xs rounded-lg text-center font-medium"></div>
+        
+        <form id="loginForm" class="space-y-4">
+          <div>
+             <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Username</label>
+             <input id="loginUser" type="text" class="${uiTextInputClass()}" placeholder="admin / staffA" required autofocus />
+          </div>
+          
+          <div>
+             <label class="block text-xs font-bold text-slate-500 uppercase mb-1">Password</label>
+             <div class="relative">
+               <input id="loginPass" type="password" class="${uiTextInputClass()} pr-10" placeholder="••••" required />
+               <button type="button" id="togglePass" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 focus:outline-none">
+                 <svg id="eyeIcon" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                 </svg>
+               </button>
+             </div>
+          </div>
+
+          <button type="submit" class="${btnPrimary("w-full mt-2 shadow-lg")}">Sign In</button>
+        </form>
+      </div>
+    </div>
+    `;
+  }
 
   return `
     <div class="fixed inset-0 z-[50] bg-black/40 flex items-center justify-center p-4">
@@ -1287,6 +1432,76 @@ function modalPay({ invoiceNo, total }) {
 // Handlers
 // ---------------------------
 function attachHandlers() {
+
+  document.getElementById("btnLogout")?.addEventListener("click", () => {
+    localStorage.clear();
+    window.location.reload();
+  });
+
+  // ✅ LOGIN HANDLER
+  if (state.modal?.type === "LOGIN") {
+
+    // Toggle Password Visibility
+    document.getElementById("togglePass")?.addEventListener("click", () => {
+      const input = document.getElementById("loginPass");
+      const icon = document.getElementById("eyeIcon");
+
+      if (input.type === "password") {
+        input.type = "text";
+        // Switch to "Eye Open" icon
+        icon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />`;
+      } else {
+        input.type = "password";
+        // Switch back to "Eye Closed" icon
+        icon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />`;
+      }
+    });
+
+    document.getElementById("loginForm")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const u = document.getElementById("loginUser").value;
+      const p = document.getElementById("loginPass").value;
+      const errBox = document.getElementById("loginError");
+
+      try {
+        // 1. Call Login
+        // Note: We use the new apiPost which handles the URL correctly now
+        const res = await apiPost("/auth/login", { username: u, pass: p });
+
+        // 2. Validate Response (Debugging)
+        console.log("Login Success:", res);
+
+        // 3. SAVE SESSION
+        localStorage.setItem('authToken', res.access_token);
+        localStorage.setItem('userRole', res.user.role);
+        localStorage.setItem('userBranch', res.user.branch || "");
+
+        // ✅ CRITICAL: Save the Name properly
+        // If res.user.name is undefined, it defaults to role
+        localStorage.setItem('userName', res.user.name || res.user.role);
+
+        // 4. UPDATE STATE IMMEDIATELY
+        state.user = {
+          role: res.user.role,
+          branch: res.user.branch,
+          name: res.user.name || res.user.role
+        };
+
+        state.branch = res.user.branch || "A"; // Force branch setting
+        state.modal = null; // Close modal
+
+        render();
+        loadOrdersBoard();
+
+      } catch (err) {
+        console.error(err);
+        errBox.innerText = "Invalid credentials";
+        errBox.classList.remove("hidden");
+      }
+    });
+    return; // Stop attaching other handlers if we are in login mode
+  }
+
   document.getElementById("btnNewOrder")?.addEventListener("click", () => {
     openModal("CREATE_ORDER");
   });
@@ -1378,7 +1593,14 @@ function attachHandlers() {
         state.loading = false;
         render();
         // Restore focus
-        document.getElementById("orderSearch")?.focus();
+        // ✅ FIX: Restore focus AND move cursor to the end
+        const input = document.getElementById("orderSearch");
+        if (input) {
+          input.focus();
+          const len = input.value.length;
+          // This forces the cursor to the very end of the text
+          input.setSelectionRange(len, len);
+        }
       }
     }
   });
@@ -1391,7 +1613,23 @@ function attachHandlers() {
   });
 
   document.querySelectorAll("tr[data-order]").forEach((tr) => {
-    tr.addEventListener("click", () => loadOrderDetails(tr.getAttribute("data-order")));
+    tr.addEventListener("click", () => {
+      loadOrderDetails(tr.getAttribute("data-order"));
+
+      // UI Scroll Logic
+      if (window.innerWidth < 1024) {
+        // Mobile/Tablet (< 1024px): Scroll DOWN to the details panel
+        setTimeout(() => {
+          const details = document.getElementById("details-panel-container");
+          if (details) {
+            details.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }, 100);
+      } else {
+        // Desktop (>= 1024px): Scroll UP to top so details are visible
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+    });
   });
 
   document.getElementById("btnAddItem")?.addEventListener("click", () => {
@@ -1575,6 +1813,18 @@ function attachHandlers() {
     document.getElementById("confirmStatus")?.addEventListener("click", async () => {
       const orderCode = state.modal.data.orderCode;
       const newStatus = document.getElementById("newStatus").value;
+
+      // ✅ Updated Safety Check
+      if (newStatus === "CANCELLED") {
+        // Removed "Cannot be undone". Added 'danger' for Red button.
+        const confirmed = await window.confirmAction(
+          "Are you sure you want to CANCEL this order?",
+          'danger'
+        );
+
+        if (!confirmed) return;
+      }
+
       closeModal();
       await updateOrderStatus(orderCode, newStatus);
     });
@@ -1612,11 +1862,37 @@ function attachHandlers() {
   }
 }
 
+// ✅ NEW: Promise-based Confirmation with Type
+window.confirmAction = (msg, type = 'normal') => {
+  return new Promise((resolve) => {
+    state.confirm = {
+      msg,
+      type, // 'normal' or 'danger'
+      resolve: (val) => {
+        state.confirm = null;
+        render();
+        resolve(val);
+      }
+    };
+    render();
+  });
+};
+
+window.resolveConfirm = (result) => {
+  if (state.confirm) state.confirm.resolve(result);
+};
+
 function render() {
   document.getElementById("app").innerHTML = layout();
   attachHandlers();
 }
 
 // boot
-render();
-loadOrdersBoard();
+const hasToken = !!localStorage.getItem('authToken');
+if (!hasToken) {
+  state.modal = { type: "LOGIN" }; // Show login immediately
+  render();
+} else {
+  render();
+  loadOrdersBoard();
+}

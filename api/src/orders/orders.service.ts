@@ -27,7 +27,6 @@ function tatMultiplier(tat: TurnaroundType): number {
 export class OrdersService {
     constructor(private prisma: PrismaService) { }
 
-    // src/orders/orders.service.ts
     async createOrder(input: {
         branch: "A" | "B";
         customerName?: string;
@@ -35,30 +34,19 @@ export class OrdersService {
         customerAddress?: string;
         customerNotes?: string;
         notes?: string;
-        yymmdd?: string; // ✅ We accept the date here
+        yymmdd?: string;
     }) {
         const branch = input.branch;
-        // 1. Determine the Date String (e.g., "260111")
-        // If frontend sends it, use it. Otherwise default to today.
+
+        // 1. Business Date: Determines the Order ID (e.g. 260111) and Board Grouping
         const yymmdd = input.yymmdd || yymmddNow();
 
-        // 2. ✅ PARSE DATE: Convert "260111" -> Date Object
-        const yy = parseInt(yymmdd.slice(0, 2), 10) + 2000;
-        const mm = parseInt(yymmdd.slice(2, 4), 10) - 1; // JS Months are 0-11
-        const dd = parseInt(yymmdd.slice(4, 6), 10);
-
-        const orderDate = new Date(yy, mm, dd);
-
-        // Logic: If creating for "Today", use current time. 
-        // If backdating/future, default to 10:00 AM.
-        if (yymmdd === yymmddNow()) {
-            orderDate.setHours(new Date().getHours(), new Date().getMinutes());
-        } else {
-            orderDate.setHours(10, 0, 0);
-        }
+        // 2. Audit Date: Records exactly when the staff pressed the button (Now)
+        // This ensures the new entry sorts to the TOP of the list immediately.
+        const now = new Date();
 
         return this.prisma.$transaction(async (tx) => {
-            // Counter Logic
+            // Get next number for that specific Business Date
             const counter = await tx.orderCounter.upsert({
                 where: { branch_yymmdd: { branch, yymmdd } },
                 create: { branch, yymmdd, lastNo: 1 },
@@ -67,7 +55,7 @@ export class OrdersService {
             const runningNo = counter.lastNo;
             const orderCode = `NR-${branch}-${yymmdd}-${pad4(runningNo)}`;
 
-            // Customer Logic (No changes needed here, logic is good)
+            // Customer Logic
             let customerId: number | null = null;
             if (input.customerPhone && input.customerPhone.trim()) {
                 const phone = input.customerPhone.trim();
@@ -75,7 +63,9 @@ export class OrdersService {
                 const address = (input.customerAddress ?? "").trim() || null;
                 const notes = (input.customerNotes ?? "").trim() || null;
 
-                const existing = await tx.customer.findFirst({ where: { phone, isArchived: false } });
+                const existing = await tx.customer.findFirst({
+                    where: { phone, isArchived: false },
+                });
 
                 if (existing) {
                     customerId = existing.id;
@@ -93,12 +83,12 @@ export class OrdersService {
                 }
             }
 
-            // 3. Create Order
+            // Create Order
             return tx.order.create({
                 data: {
                     orderCode,
                     branch,
-                    yymmdd, // This sets the code string
+                    yymmdd, // ✅ Keeps it on the correct "Board"
                     runningNo,
                     customerId,
                     notes: input.notes ?? null,
@@ -106,7 +96,7 @@ export class OrdersService {
                     subtotal: 0,
                     discount: 0,
                     total: 0,
-                    createdAt: orderDate, // ✅ CRITICAL: Sets the actual DB Timestamp to matched date
+                    createdAt: now, // ✅ Uses Real Time (ensures it appears at top)
                 },
                 include: { customer: true, items: true },
             });
@@ -115,7 +105,7 @@ export class OrdersService {
 
     async addItem(input: {
         orderCode: string;
-        itemCode: string; // from catalog
+        itemCode: string;
         qty: number;
         tatType?: TurnaroundType;
     }) {
@@ -138,9 +128,6 @@ export class OrdersService {
         const unitPrice = Number(catalog.basePrice) * mult;
         const lineTotal = unitPrice * qty;
 
-        const unitPriceStr = unitPrice.toFixed(2);
-        const lineTotalStr = lineTotal.toFixed(2);
-
         return this.prisma.$transaction(async (tx) => {
             const itemNo = (await tx.orderItem.count({ where: { orderId: order.id } })) + 1;
             const itemLabelCode = `${order.orderCode}-${pad2(itemNo)}`;
@@ -153,8 +140,8 @@ export class OrdersService {
                     itemName: catalog.displayName,
                     unitType: catalog.unitType,
                     qty,
-                    unitPrice: unitPriceStr,
-                    lineTotal: lineTotalStr,
+                    unitPrice: unitPrice.toFixed(2),
+                    lineTotal: lineTotal.toFixed(2),
                     tatType,
                     tatMultiplier: mult.toFixed(3),
                     expectedDays: catalog.defaultTatDays,
@@ -164,7 +151,6 @@ export class OrdersService {
                 },
             });
 
-            // Update order totals
             const agg = await tx.orderItem.aggregate({
                 where: { orderId: order.id },
                 _sum: { lineTotal: true },
@@ -187,21 +173,21 @@ export class OrdersService {
         });
     }
 
-    // src/orders/orders.service.ts
-
-    async searchOrders(term: string, branch?: "A" | "B") {
+    async searchOrders(term: string, branchFilter?: "A" | "B", user?: any) {
         const q = (term ?? "").trim();
         if (!q) return [];
+
+        const enforcedBranch = user?.branch || branchFilter;
 
         const orders = await this.prisma.order.findMany({
             where: {
                 AND: [
-                    branch ? { branch } : {},
+                    enforcedBranch ? { branch: enforcedBranch } : {},
                     {
                         OR: [
                             { orderCode: { contains: q } },
                             { customer: { phone: { contains: q } } },
-                            { customer: { name: { contains: q } } }, // Added Name search
+                            { customer: { name: { contains: q } } },
                         ],
                     },
                 ],
@@ -216,22 +202,19 @@ export class OrdersService {
                         total: true,
                         paidAmount: true,
                         createdAt: true,
-                        tatType: true, // ✅ Vital for the Icon!
+                        tatType: true,
                     },
                     orderBy: { createdAt: "desc" },
                     take: 1,
                 },
             },
+            // ✅ Consistent Sort: Latest Created First
             orderBy: { createdAt: "desc" },
             take: 20,
         });
 
-        // ✅ Map to same format as listToday
         return orders.map((o) => {
             const inv = o.invoices[0] ?? null;
-            const invoiceStatus = inv?.status ?? "NONE";
-            const isPaid = invoiceStatus === "PAID";
-
             return {
                 orderCode: o.orderCode,
                 branch: o.branch,
@@ -244,50 +227,42 @@ export class OrdersService {
                 itemCount: o._count.items,
                 subtotal: o.subtotal,
                 total: o.total,
-                invoiceStatus,
+                invoiceStatus: inv?.status ?? "NONE",
                 invoiceNo: inv?.invoiceNo ?? null,
-                isPaid,
-                tatType: inv?.tatType, // ✅ Pass this through!
+                isPaid: inv?.status === "PAID",
+                tatType: inv?.tatType,
             };
         });
     }
 
     async listToday(
-        branch: "A" | "B",
-        filters?: { paid?: string; status?: OrderStatus; yymmdd?: string },
+        requestedBranch: string,
+        filters: any,
+        user: any
     ) {
-        if (branch !== "A" && branch !== "B") {
-            throw new BadRequestException("Invalid branch. Use A or B.");
+        const targetBranch = user.branch ? user.branch : (requestedBranch || 'A');
+
+        if (targetBranch !== "A" && targetBranch !== "B") {
+            throw new BadRequestException("Invalid branch.");
         }
 
         const yymmdd = (filters?.yymmdd && /^\d{6}$/.test(filters.yymmdd))
             ? filters.yymmdd
             : yymmddNow();
 
-        if (filters?.yymmdd && !/^\d{6}$/.test(filters.yymmdd)) {
-            throw new BadRequestException("yymmdd must be 6 digits like 251228");
-        }
-
-
-        // Parse paid filter
         let paidFilter: boolean | undefined = undefined;
         if (filters?.paid !== undefined) {
             const v = String(filters.paid).toLowerCase().trim();
             if (v === "true" || v === "1") paidFilter = true;
             else if (v === "false" || v === "0") paidFilter = false;
-            else throw new BadRequestException("paid must be true or false");
         }
 
-        const statusFilter = filters?.status;
-
-        // Build Prisma where
         const where: any = {
-            branch,
+            branch: targetBranch,
             yymmdd,
-            ...(statusFilter ? { status: statusFilter } : {}),
+            ...(filters?.status ? { status: filters.status } : {}),
         };
 
-        // ✅ Correct paid/unpaid filtering
         if (paidFilter === true) {
             where.invoices = { some: { status: InvoiceStatus.PAID } };
         } else if (paidFilter === false) {
@@ -309,17 +284,20 @@ export class OrdersService {
                         tatType: true,
                     },
                     orderBy: { createdAt: "desc" },
-                    take: 1, // latest invoice for display only
+                    take: 1,
                 },
             },
-            orderBy: { runningNo: "desc" },
+            // ✅ PRACTICAL SORT: 
+            // 1. Created At (Latest timestamp first) - Handles "Entered Just Now"
+            // 2. Running No (Highest ID first) - Tie-breaker if entered same second
+            orderBy: [
+                { createdAt: 'desc' },
+                { runningNo: 'desc' }
+            ],
         });
 
         return orders.map((o) => {
             const inv = o.invoices[0] ?? null;
-            const invoiceStatus = inv?.status ?? "NONE";
-            const isPaid = invoiceStatus === "PAID";
-
             return {
                 orderCode: o.orderCode,
                 branch: o.branch,
@@ -327,12 +305,14 @@ export class OrdersService {
                 status: o.status,
                 customerName: o.customer?.name ?? null,
                 customerPhone: o.customer?.phone ?? null,
+                customerAddress: o.customer?.address ?? "",
+                customerNotes: o.customer?.notes ?? "",
                 itemCount: o._count.items,
                 subtotal: o.subtotal,
                 total: o.total,
-                invoiceStatus,
+                invoiceStatus: inv?.status ?? "NONE",
                 invoiceNo: inv?.invoiceNo ?? null,
-                isPaid,
+                isPaid: inv?.status === "PAID",
                 tatType: inv?.tatType ?? "NORMAL",
             };
         });
@@ -340,14 +320,7 @@ export class OrdersService {
 
     async updateOrderStatus(orderCode: string, status: OrderStatus) {
         const allowed: OrderStatus[] = [
-            "RECEIVED",
-            "SORTING",
-            "WASHING",
-            "DRYING",
-            "IRONING",
-            "READY",
-            "DELIVERED",
-            "CANCELLED",
+            "RECEIVED", "SORTING", "WASHING", "DRYING", "IRONING", "READY", "DELIVERED", "CANCELLED",
         ];
 
         if (!allowed.includes(status)) {
@@ -362,5 +335,4 @@ export class OrdersService {
             data: { status },
         });
     }
-
 }
