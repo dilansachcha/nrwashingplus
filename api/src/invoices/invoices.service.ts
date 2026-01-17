@@ -138,7 +138,7 @@ export class InvoicesService {
     }
 
     /**
-     * Pay invoice (supports partial payment too)
+     * Pay invoice
      * - Updates paidAmount and balance
      * - If balance becomes 0 => status PAID + paidAt timestamp
      */

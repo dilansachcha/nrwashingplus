@@ -407,8 +407,16 @@ function renderReportsView() {
 
     const {
         totalOrders, totalRevenue, pendingCount, completedCount, statusCounts, categoryBreakdown,
-        unpaidProcessing, unpaidReady // ✅ New fields
+        unpaidProcessing, unpaidReady
     } = state.reports;
+
+    // ✅ Helper to format money correctly (Commas + 2 Decimals)
+    const fmtMoney = (amount) => {
+        return Number(amount || 0).toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    };
 
     return `
     <div class="flex flex-col md:flex-row gap-6 h-full">
@@ -458,24 +466,24 @@ function renderReportsView() {
                     <div class="flex items-start justify-between mb-4">
                         <div>
                             <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Paid Revenue</div>
-                            <div class="text-3xl font-bold text-slate-900">Rs. ${totalRevenue.toLocaleString()}.00</div>
+                            <div class="text-3xl font-bold text-slate-900">Rs. ${fmtMoney(totalRevenue)}</div>
                         </div>
-<div class="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 border border-slate-200">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" id="rupee" class="w-8 h-8">
-            <path fill="#3b3c3d" d="M38 38a3.89 3.89 0 0 1-3.69-5.11L35.61 29H34a1 1 0 0 1 0-2h3a1 1 0 0 1 .81.41 1 1 0 0 1 .14.91l-1.74 5.21A1.88 1.88 0 0 0 38 36a1 1 0 0 1 0 2zM32.73 19.69a1 1 0 1 0-1.46-1.38c-.39.42-1.51 1.58-1.92 1.93-1.08.92-4.75 3.37-4.79 3.4l0 .05a5 5 0 1 0 4.08-.4c.82-.58 1.61-1.16 2-1.53S32.57 19.85 32.73 19.69zM30 28a3 3 0 1 1-3-3A3 3 0 0 1 30 28z"></path>
-            <path fill="#3b3c3d" d="M30 4A23 23 0 1 0 53 27 23 23 0 0 0 30 4zm0 41A18 18 0 1 1 48 27 18 18 0 0 1 30 45zM52.45 38A22.71 22.71 0 0 1 49 46V43.23A24.74 24.74 0 0 0 52.45 38zM47 45.32v3.17A23.35 23.35 0 0 1 43 52V48.36A24.66 24.66 0 0 0 47 45.32zM41 49.45V53.2a22.58 22.58 0 0 1-4 1.73V51A25.17 25.17 0 0 0 41 49.45z"></path>
-            <path fill="#3b3c3d" d="M35 51.52v3.95A22.91 22.91 0 0 1 31 56V52A25.12 25.12 0 0 0 35 51.52zM29 52v4a22.91 22.91 0 0 1-4-.51V51.52A25.12 25.12 0 0 0 29 52zM23 51v3.91a22.58 22.58 0 0 1-4-1.73V49.45A24.8 24.8 0 0 0 23 51zM17 48.36V52a23.35 23.35 0 0 1-4-3.49V45.32A24.66 24.66 0 0 0 17 48.36zM11 43.23V46A22.71 22.71 0 0 1 7.55 38 24.74 24.74 0 0 0 11 43.23z"></path>
-        </svg>
-    </div>
+                        <div class="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 border border-slate-200">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" id="rupee" class="w-8 h-8">
+                                <path fill="#3b3c3d" d="M38 38a3.89 3.89 0 0 1-3.69-5.11L35.61 29H34a1 1 0 0 1 0-2h3a1 1 0 0 1 .81.41 1 1 0 0 1 .14.91l-1.74 5.21A1.88 1.88 0 0 0 38 36a1 1 0 0 1 0 2zM32.73 19.69a1 1 0 1 0-1.46-1.38c-.39.42-1.51 1.58-1.92 1.93-1.08.92-4.75 3.37-4.79 3.4l0 .05a5 5 0 1 0 4.08-.4c.82-.58 1.61-1.16 2-1.53S32.57 19.85 32.73 19.69zM30 28a3 3 0 1 1-3-3A3 3 0 0 1 30 28z"></path>
+                                <path fill="#3b3c3d" d="M30 4A23 23 0 1 0 53 27 23 23 0 0 0 30 4zm0 41A18 18 0 1 1 48 27 18 18 0 0 1 30 45zM52.45 38A22.71 22.71 0 0 1 49 46V43.23A24.74 24.74 0 0 0 52.45 38zM47 45.32v3.17A23.35 23.35 0 0 1 43 52V48.36A24.66 24.66 0 0 0 47 45.32zM41 49.45V53.2a22.58 22.58 0 0 1-4 1.73V51A25.17 25.17 0 0 0 41 49.45z"></path>
+                                <path fill="#3b3c3d" d="M35 51.52v3.95A22.91 22.91 0 0 1 31 56V52A25.12 25.12 0 0 0 35 51.52zM29 52v4a22.91 22.91 0 0 1-4-.51V51.52A25.12 25.12 0 0 0 29 52zM23 51v3.91a22.58 22.58 0 0 1-4-1.73V49.45A24.8 24.8 0 0 0 23 51zM17 48.36V52a23.35 23.35 0 0 1-4-3.49V45.32A24.66 24.66 0 0 0 17 48.36zM11 43.23V46A22.71 22.71 0 0 1 7.55 38 24.74 24.74 0 0 0 11 43.23z"></path>
+                            </svg>
+                        </div>
                     </div>
                     <div class="pt-4 border-t border-slate-100 grid grid-cols-2 gap-4">
                         <div>
                             <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Unpaid (Processing)</div>
-                            <div class="text-sm font-bold text-slate-700 mt-0.5">Rs. ${unpaidProcessing.toLocaleString()}.00</div>
+                            <div class="text-sm font-bold text-slate-700 mt-0.5">Rs. ${fmtMoney(unpaidProcessing)}</div>
                         </div>
                         <div>
                             <div class="text-[10px] font-bold text-indigo-500 uppercase tracking-wide">Unpaid (Ready)</div>
-                            <div class="text-sm font-bold text-indigo-700 mt-0.5">Rs. ${unpaidReady.toLocaleString()}.00</div>
+                            <div class="text-sm font-bold text-indigo-700 mt-0.5">Rs. ${fmtMoney(unpaidReady)}</div>
                         </div>
                     </div>
                 </div>
@@ -485,11 +493,11 @@ function renderReportsView() {
                         <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-1">Total Orders</div>
                         <div class="text-3xl font-bold text-slate-900">${totalOrders}</div>
                     </div>
-<div class="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 border border-slate-200">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" id="hanger" class="w-8 h-8">
-            <path d="M93 27H70.4L60 22.67v-1.92c3.45-.89 6-4.03 6-7.75 0-4.41-3.59-8-8-8s-8 3.59-8 8c0 1.1.9 2 2 2s2-.9 2-2c0-2.21 1.79-4 4-4s4 1.79 4 4-1.79 4-4 4c-1.1 0-2 .9-2 2v3.67L45.6 27H23c-1.1 0-2 .9-2 2v24c0 1.1.9 2 2 2h12v6H12c-3.86 0-7 3.14-7 7 0 1.96.81 3.73 2.11 5A6.97 6.97 0 0 0 5 78c0 1.96.81 3.73 2.11 5A6.97 6.97 0 0 0 5 88c0 3.86 3.14 7 7 7h67c1.1 0 2-.9 2-2V55h12c1.1 0 2-.9 2-2V29c0-1.1-.9-2-2-2zm-35-.83 9.91 4.12C67.27 35.2 63.07 39 58 39s-9.27-3.8-9.91-8.71L58 26.17zM60 91H12c-1.65 0-3-1.35-3-3s1.35-3 3-3h48c1.65 0 3 1.35 3 3s-1.35 3-3 3zm0-10H12c-1.65 0-3-1.35-3-3s1.35-3 3-3h48c1.65 0 3 1.35 3 3s-1.35 3-3 3zm0-10H12c-1.65 0-3-1.35-3-3s1.35-3 3-3h48c1.65 0 3 1.35 3 3s-1.35 3-3 3zm31-20H81v-4c0-1.1-.9-2-2-2s-2 .9-2 2v44H66.31c.44-.91.69-1.93.69-3 0-1.96-.81-3.73-2.11-5A6.97 6.97 0 0 0 67 78c0-1.96-.81-3.73-2.11-5A6.97 6.97 0 0 0 67 68c0-3.86-3.14-7-7-7H39V47c0-1.1-.9-2-2-2s-2 .9-2 2v4H25V31h19.16c.98 6.77 6.8 12 13.84 12s12.86-5.23 13.84-12H91v20z"></path>
-        </svg>
-    </div>
+                    <div class="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 border border-slate-200">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" id="hanger" class="w-8 h-8">
+                            <path d="M93 27H70.4L60 22.67v-1.92c3.45-.89 6-4.03 6-7.75 0-4.41-3.59-8-8-8s-8 3.59-8 8c0 1.1.9 2 2 2s2-.9 2-2c0-2.21 1.79-4 4-4s4 1.79 4 4-1.79 4-4 4c-1.1 0-2 .9-2 2v3.67L45.6 27H23c-1.1 0-2 .9-2 2v24c0 1.1.9 2 2 2h12v6H12c-3.86 0-7 3.14-7 7 0 1.96.81 3.73 2.11 5A6.97 6.97 0 0 0 5 78c0 1.96.81 3.73 2.11 5A6.97 6.97 0 0 0 5 88c0 3.86 3.14 7 7 7h67c1.1 0 2-.9 2-2V55h12c1.1 0 2-.9 2-2V29c0-1.1-.9-2-2-2zm-35-.83 9.91 4.12C67.27 35.2 63.07 39 58 39s-9.27-3.8-9.91-8.71L58 26.17zM60 91H12c-1.65 0-3-1.35-3-3s1.35-3 3-3h48c1.65 0 3 1.35 3 3s-1.35 3-3 3zm0-10H12c-1.65 0-3-1.35-3-3s1.35-3 3-3h48c1.65 0 3 1.35 3 3s-1.35 3-3 3zm0-10H12c-1.65 0-3-1.35-3-3s1.35-3 3-3h48c1.65 0 3 1.35 3 3s-1.35 3-3 3zm31-20H81v-4c0-1.1-.9-2-2-2s-2 .9-2 2v44H66.31c.44-.91.69-1.93.69-3 0-1.96-.81-3.73-2.11-5A6.97 6.97 0 0 0 67 78c0-1.96-.81-3.73-2.11-5A6.97 6.97 0 0 0 67 68c0-3.86-3.14-7-7-7H39V47c0-1.1-.9-2-2-2s-2 .9-2 2v4H25V31h19.16c.98 6.77 6.8 12 13.84 12s12.86-5.23 13.84-12H91v20z"></path>
+                        </svg>
+                    </div>
                 </div>
             </div>
 
@@ -560,15 +568,18 @@ function toastUi() {
     if (!state.toast) return "";
     const { msg, type } = state.toast;
 
-    // Default / Info -> Dark Slate (Neutral Professional)
-    let bgClass = "bg-slate-800 text-white shadow-xl";
+    // Default to Info (Slate/Dark for neutral updates)
+    // OR we can make Info light too if you prefer: "bg-slate-50 border-slate-200 text-slate-800"
+    // Let's stick to the main.js logic you liked.
+
+    let bgClass = "bg-emerald-50 border border-emerald-200 text-emerald-900 shadow-lg";
 
     if (type === 'success') {
-        // Success -> Emerald Green
-        bgClass = "bg-emerald-600 text-white shadow-xl shadow-emerald-100";
+        // ✅ Match Main.js: Light Green
+        bgClass = "bg-emerald-50 border border-emerald-200 text-emerald-900 shadow-lg";
     } else if (type === 'error') {
-        // Error -> Rose Red
-        bgClass = "bg-rose-600 text-white shadow-xl shadow-rose-100";
+        // ✅ Match Main.js: Light Red
+        bgClass = "bg-rose-50 border border-rose-200 text-rose-900 shadow-lg";
     }
 
     return `
@@ -743,14 +754,46 @@ window.handleToggleItem = async (id, newVal) => {
 window.handleEditItem = (id) => { state.modal = { type: 'EDIT_ITEM', data: state.items.find(i => i.id === id) }; render(); };
 window.handleSelectCustomer = (id) => { state.selectedCustId = id; render(); };
 window.handleSaveCustomer = async (id) => {
-    const data = {
-        name: document.getElementById('custName').value.trim(),
-        phone: document.getElementById('custPhone').value.trim(),
-        address: document.getElementById('custAddress').value.trim(),
-        notes: document.getElementById('custNotes').value.trim()
-    };
-    if (!data.name) return showToast("Name is required", 'error');
-    try { await apiPatch(`/api/customers/${id}`, data); await loadCustomers(); showToast("Saved!"); } catch (e) { showToast(e.message, 'error'); }
+    const name = document.getElementById('custName').value.trim();
+    const phone = document.getElementById('custPhone').value.trim();
+    const address = document.getElementById('custAddress').value.trim();
+    const notes = document.getElementById('custNotes').value.trim();
+
+    // 1. Validate Name (Required)
+    if (!name) {
+        return showToast("Customer Name is required.", 'error');
+    }
+
+    // 2. Validate Phone Format (Sri Lanka: 10 Digits starting with 0)
+    // Matches logic in Counter Board
+    const slPhoneRegex = /^0\d{9}$/;
+    if (!slPhoneRegex.test(phone)) {
+        return showToast("Invalid Phone. Must be 10 digits starting with 0 (e.g., 077...)", 'error');
+    }
+
+    // 3. Duplicate Phone Check (Prevent Crashes)
+    // We check our local list of customers before sending to server
+    const currentCust = state.customers.find(c => c.id === id);
+
+    // Only check if the phone number is being CHANGED
+    if (currentCust && currentCust.phone !== phone) {
+        const duplicate = state.customers.find(c => c.phone === phone);
+        if (duplicate) {
+            // Alert user instead of crashing
+            return showToast(`Phone number already in use by: ${duplicate.name}`, 'error');
+        }
+    }
+
+    // Prepare Payload
+    const data = { name, phone, address, notes };
+
+    try {
+        await apiPatch(`/api/customers/${id}`, data);
+        await loadCustomers();
+        showToast("Customer details saved successfully!", 'success');
+    } catch (e) {
+        showToast(e.message || "Failed to save", 'error');
+    }
 };
 window.handleArchiveCustomer = async (id, isArchived) => {
     const action = isArchived ? 'ARCHIVE' : 'UNARCHIVE';

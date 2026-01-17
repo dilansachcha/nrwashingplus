@@ -63,19 +63,29 @@ export class OrdersService {
                 const address = (input.customerAddress ?? "").trim() || null;
                 const notes = (input.customerNotes ?? "").trim() || null;
 
-                const existing = await tx.customer.findFirst({
-                    where: { phone, isArchived: false },
+                // 1. Search GLOBAL (Ignore isArchived status)
+                // We must find them even if archived to avoid Unique Constraint Error
+                const existing = await tx.customer.findUnique({
+                    where: { phone },
                 });
 
                 if (existing) {
                     customerId = existing.id;
-                    if (name !== existing.name || address !== existing.address) {
-                        await tx.customer.update({
-                            where: { id: existing.id },
-                            data: { name, address, notes },
-                        });
-                    }
+
+                    // ✅ SILENT REACTIVATION: 
+                    // Update the old record with the NEW Name/Address provided by staff.
+                    // Set isArchived = false to bring them back to life.
+                    await tx.customer.update({
+                        where: { id: existing.id },
+                        data: {
+                            name,      // Overwrite with new name
+                            address,   // Overwrite with new address
+                            notes,     // Overwrite with new notes
+                            isArchived: false // ✅ Resurrect!
+                        },
+                    });
                 } else {
+                    // 2. Truly New Customer
                     const created = await tx.customer.create({
                         data: { phone, name, address, notes, isArchived: false },
                     });
@@ -108,6 +118,8 @@ export class OrdersService {
         itemCode: string;
         qty: number;
         tatType?: TurnaroundType;
+        customName?: string;  // ✅ Allow overriding name
+        customPrice?: number; // ✅ Allow overriding price
     }) {
         const order = await this.prisma.order.findUnique({
             where: { orderCode: input.orderCode },
@@ -125,11 +137,25 @@ export class OrdersService {
         const tatType = input.tatType ?? "NORMAL";
         const mult = tatMultiplier(tatType);
 
-        const unitPrice = Number(catalog.basePrice) * mult;
+        // ✅ LOGIC: Use custom price if provided (for OI), otherwise use catalog default
+        let basePrice = Number(catalog.basePrice);
+        if (input.customPrice !== undefined && input.customPrice !== null) {
+            basePrice = Number(input.customPrice);
+        }
+
+        const unitPrice = basePrice * mult;
         const lineTotal = unitPrice * qty;
 
+        // ✅ LOGIC: Use custom name if provided, otherwise use catalog name
+        const finalName = input.customName ? input.customName : catalog.displayName;
+
         return this.prisma.$transaction(async (tx) => {
-            const itemNo = (await tx.orderItem.count({ where: { orderId: order.id } })) + 1;
+            const lastItem = await tx.orderItem.findFirst({
+                where: { orderId: order.id },
+                orderBy: { itemNo: 'desc' },
+                select: { itemNo: true }
+            });
+            const itemNo = (lastItem?.itemNo ?? 0) + 1;
             const itemLabelCode = `${order.orderCode}-${pad2(itemNo)}`;
 
             const created = await tx.orderItem.create({
@@ -137,7 +163,7 @@ export class OrdersService {
                     orderId: order.id,
                     catalogItemId: catalog.id,
                     itemCode: catalog.itemCode,
-                    itemName: catalog.displayName,
+                    itemName: finalName, // ✅ Saved here
                     unitType: catalog.unitType,
                     qty,
                     unitPrice: unitPrice.toFixed(2),
@@ -151,6 +177,7 @@ export class OrdersService {
                 },
             });
 
+            // Recalculate totals
             const agg = await tx.orderItem.aggregate({
                 where: { orderId: order.id },
                 _sum: { lineTotal: true },
@@ -163,6 +190,41 @@ export class OrdersService {
             });
 
             return created;
+        });
+    }
+
+    // ✅ NEW: Remove Item Logic
+    async removeItem(orderCode: string, itemId: number) {
+        const order = await this.prisma.order.findUnique({
+            where: { orderCode },
+            include: { invoices: true }
+        });
+
+        if (!order) throw new BadRequestException("Order not found");
+
+        // Safety Check: Don't allow editing if Invoice exists
+        if (order.invoices.length > 0) {
+            throw new BadRequestException("Order Locked: Cannot remove items after Invoice is created.");
+        }
+
+        return this.prisma.$transaction(async (tx) => {
+            // 1. Delete the item
+            await tx.orderItem.delete({
+                where: { id: itemId }
+            });
+
+            // 2. Recalculate Order Total
+            const agg = await tx.orderItem.aggregate({
+                where: { orderId: order.id },
+                _sum: { lineTotal: true }
+            });
+            const newTotal = Number(agg._sum.lineTotal || 0);
+
+            // 3. Update Order
+            return tx.order.update({
+                where: { id: order.id },
+                data: { subtotal: newTotal, total: newTotal } // Reset discount on edit for safety
+            });
         });
     }
 
@@ -222,6 +284,7 @@ export class OrdersService {
                 status: o.status,
                 customerName: o.customer?.name ?? null,
                 customerPhone: o.customer?.phone ?? null,
+                isCustomerArchived: o.customer?.isArchived ?? false,
                 customerAddress: o.customer?.address ?? "",
                 customerNotes: o.customer?.notes ?? "",
                 itemCount: o._count.items,
@@ -231,6 +294,7 @@ export class OrdersService {
                 invoiceNo: inv?.invoiceNo ?? null,
                 isPaid: inv?.status === "PAID",
                 tatType: inv?.tatType,
+                paidAmount: Number(inv?.paidAmount ?? 0),
             };
         });
     }
@@ -240,9 +304,20 @@ export class OrdersService {
         filters: any,
         user: any
     ) {
-        const targetBranch = user.branch ? user.branch : (requestedBranch || 'A');
+        // 1. Determine Target Branch
+        // If the user has a branch (STAFF), force it. 
+        // If not (ADMIN), take what they requested.
+        let targetBranch = user.branch ? user.branch : requestedBranch;
 
-        if (targetBranch !== "A" && targetBranch !== "B") {
+        // Default logic: If they didn't ask for anything, default to 'A'.
+        // BUT: If they explicitly asked for "" (empty string), we keep it as "" to mean "ALL".
+        if (!targetBranch && targetBranch !== "") {
+            targetBranch = 'A';
+        }
+
+        // 2. Validate ONLY if a specific branch was chosen
+        // If targetBranch is NOT empty, it must be A or B.
+        if (targetBranch && targetBranch !== "A" && targetBranch !== "B") {
             throw new BadRequestException("Invalid branch.");
         }
 
@@ -257,9 +332,13 @@ export class OrdersService {
             else if (v === "false" || v === "0") paidFilter = false;
         }
 
+        // 3. Build Query
+        // ✅ The magic happens here:
+        // If targetBranch is "" (All), the `...( ... )` part evaluates to nothing,
+        // so no branch filter is added to the query.
         const where: any = {
-            branch: targetBranch,
             yymmdd,
+            ...(targetBranch ? { branch: targetBranch } : {}),
             ...(filters?.status ? { status: filters.status } : {}),
         };
 
@@ -287,9 +366,6 @@ export class OrdersService {
                     take: 1,
                 },
             },
-            // ✅ PRACTICAL SORT: 
-            // 1. Created At (Latest timestamp first) - Handles "Entered Just Now"
-            // 2. Running No (Highest ID first) - Tie-breaker if entered same second
             orderBy: [
                 { createdAt: 'desc' },
                 { runningNo: 'desc' }
@@ -314,6 +390,7 @@ export class OrdersService {
                 invoiceNo: inv?.invoiceNo ?? null,
                 isPaid: inv?.status === "PAID",
                 tatType: inv?.tatType ?? "NORMAL",
+                paidAmount: Number(inv?.paidAmount ?? 0),
             };
         });
     }

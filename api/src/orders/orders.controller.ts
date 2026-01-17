@@ -6,6 +6,7 @@ import {
     Param,
     Query,
     Patch,
+    Delete,
     UseGuards,
     Req // ✅ Use 'Req' instead of 'Request' for Express types
 } from "@nestjs/common";
@@ -89,5 +90,14 @@ export class OrdersController {
     ) {
         // Pass the logged-in user to the service
         return this.orders.searchOrders(q, branch, req.user);
+    }
+
+    // ✅ NEW: Delete Endpoint
+    @Delete(':orderCode/items/:itemId')
+    removeItem(
+        @Param('orderCode') orderCode: string,
+        @Param('itemId') itemId: string
+    ) {
+        return this.orders.removeItem(orderCode, Number(itemId));
     }
 }

@@ -1,5 +1,5 @@
 import "./style.css";
-import { apiGet, apiPost, apiPatch } from "./api";
+import { apiGet, apiPost, apiPatch, apiDelete } from "./api";
 
 const STATUS_OPTIONS = [
   "RECEIVED",
@@ -30,7 +30,7 @@ const state = {
   } : null,
 
   // App State
-  branch: localStorage.getItem('userBranch') || "A", // Default to assigned branch
+  branch: localStorage.getItem('userRole') === 'ADMIN' ? "" : (localStorage.getItem('userBranch') || "A"),
   paid: "",
   status: "",
   yymmdd: yymmddFromDate(new Date()),
@@ -145,10 +145,13 @@ function statusKind(s) {
 
 // ✅ Logic to map backend status to UI Label
 function getPaymentState(order) {
-  const s = order.invoiceStatus; // "NONE", "FINAL", "PAID", "VOID"
+  const s = order.invoiceStatus;
   if (!s || s === 'NONE') return 'NO INV';
-  if (s === 'FINAL') return 'UNPAID'; // Map FINAL -> UNPAID for UI
-  return s; // PAID, VOID return as is
+  if (s === 'FINAL') {
+    // ✅ If they have paid *something* but not full, it's PARTIAL
+    return (order.paidAmount > 0) ? 'PARTIAL' : 'UNPAID';
+  }
+  return s;
 }
 
 // ✅ Color mapping
@@ -156,6 +159,7 @@ function invoiceStatusKind(status) {
   switch (status) {
     case 'PAID': return 'green';
     case 'UNPAID': return 'yellow';
+    case 'PARTIAL': return 'orange';
     case 'FINAL': return 'yellow';
     case 'NO INV': return 'blue';    // ✅ Blue for No Invoice
     case 'NONE': return 'blue';
@@ -187,6 +191,13 @@ function setLoading(v) {
 function qs(params) {
   const u = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
+    // ✅ Allow empty string ONLY for 'branch' to support "All" option
+    if (k === 'branch' && v === "") {
+      u.set(k, "");
+      return;
+    }
+
+    // Standard filtering for other params
     if (v !== undefined && v !== null && String(v).trim() !== "") u.set(k, String(v));
   });
   return u.toString();
@@ -243,15 +254,29 @@ async function loadOrdersBoard() {
   try {
     setLoading(true);
 
+    // 1. Fetch ALL orders for the criteria (date/branch/status)
+    // We REMOVE 'paid' from the API query so we get everything
     const query = qs({
       branch: state.branch,
-      paid: state.paid,
+      // paid: state.paid, // ❌ Don't send this to backend anymore
       status: state.status,
       yymmdd: state.yymmdd,
     });
 
     const data = await apiGet(`/api/orders/today?${query}`);
-    state.orders = Array.isArray(data) ? data : [];
+    let allOrders = Array.isArray(data) ? data : [];
+
+    // 2. Perform Frontend Filtering for Payment Status
+    // This allows us to filter by computed properties like 'PARTIAL'
+    if (state.paid) {
+      allOrders = allOrders.filter(o => {
+        // Re-use the exact same logic we use for badges
+        const payState = getPaymentState(o);
+        return payState === state.paid;
+      });
+    }
+
+    state.orders = allOrders;
 
     if (state.selectedOrderCode) {
       const stillThere = state.orders.find((o) => o.orderCode === state.selectedOrderCode);
@@ -291,23 +316,36 @@ async function createNewOrder(payload) {
 async function lookupCustomerByPhone(phone) {
   try {
     const res = await apiGet(`/api/orders?q=${encodeURIComponent(phone)}`);
+
     if (Array.isArray(res) && res.length > 0) {
-      const first = res[0];
 
-      // 1. Nested Check (Safety fallback)
-      if (first.customer && first.customer.phone.includes(phone)) {
-        return first.customer;
-      }
+      // ✅ FIX: Find the first match that is NOT archived
+      // We don't just look at [0], we look for the first valid one.
+      const match = res.find(item => {
+        // Check flattened flag (from searchOrders)
+        if (item.isCustomerArchived === true) return false;
+        // Check nested flag (safety fallback)
+        if (item.customer?.isArchived === true) return false;
 
-      // 2. Flattened Check (Standard Search)
-      if (first.customerName && (first.customerPhone || "").includes(phone)) {
-        return {
-          name: first.customerName,
-          phone: first.customerPhone,
-          // ✅ READ THE NEW FIELDS HERE
-          address: first.customerAddress || "",
-          notes: first.customerNotes || ""
-        };
+        return true; // This is a valid, active customer
+      });
+
+      // If we found a valid, non-archived match:
+      if (match) {
+        // 1. Nested Object Strategy (Safety)
+        if (match.customer && match.customer.phone.includes(phone)) {
+          return match.customer;
+        }
+
+        // 2. Flattened Object Strategy (Standard)
+        if (match.customerName && (match.customerPhone || "").includes(phone)) {
+          return {
+            name: match.customerName,
+            phone: match.customerPhone,
+            address: match.customerAddress || "",
+            notes: match.customerNotes || ""
+          };
+        }
       }
     }
     return null;
@@ -359,7 +397,15 @@ async function payInvoice(invoiceNo, paymentMethod, paidAmount) {
       paymentMethod,
       paidAmount: Number(paidAmount),
     });
-    setToast("success", `Paid: ${res.invoiceNo ?? invoiceNo}`);
+
+    // ✅ Smart Feedback: Tell user if it's fully paid or partial
+    if (res.status === "PAID") {
+      setToast("success", `Invoice ${res.invoiceNo} Fully Paid!`);
+    } else {
+      // res.balance comes from the backend response
+      setToast("success", `Partial Payment Accepted. Balance Remaining: ${money(res.balance)}`);
+    }
+
     await loadOrdersBoard();
     if (state.selectedOrderCode) await loadOrderDetails(state.selectedOrderCode);
   } catch (e) {
@@ -367,12 +413,18 @@ async function payInvoice(invoiceNo, paymentMethod, paidAmount) {
   }
 }
 
-async function addItemToOrder(orderCode, itemCode, qty) {
+async function addItemToOrder(orderCode, payloadOrItemCode, qtyIfSimple) {
   try {
-    await apiPost(`/api/orders/${encodeURIComponent(orderCode)}/items`, {
-      itemCode,
-      qty: Number(qty),
-    });
+    let body = {};
+    if (typeof payloadOrItemCode === 'object') {
+      // Advanced Usage (OI with custom name/price)
+      body = payloadOrItemCode;
+    } else {
+      // Standard Usage (Code + Qty)
+      body = { itemCode: payloadOrItemCode, qty: Number(qtyIfSimple) };
+    }
+
+    await apiPost(`/api/orders/${encodeURIComponent(orderCode)}/items`, body);
     setToast("success", "Item added");
     await loadOrdersBoard();
     await loadOrderDetails(orderCode);
@@ -392,8 +444,13 @@ async function printInvoice(invoiceNo) {
     const orderStatus = order.status || "UNKNOWN";
     const payStatus = invoice.status || "PENDING";
 
-    const linesHtml = (invoice.lines || []).map(line => `
-      <tr style="border-bottom: 1px dotted #888;">
+    const linesHtml = (invoice.lines || []).map((line, index, arr) => {
+      // ✅ LOGIC: Only add border if it is NOT the last item
+      const isLastItem = index === arr.length - 1;
+      const borderStyle = isLastItem ? '' : 'border-bottom: 1px dashed #333;';
+
+      return `
+      <tr style="${borderStyle}">
         <td style="padding: 4px 0; vertical-align: top;">
           <div style="font-weight:bold; font-size:11px;">${escapeHtml(line.itemCode)}</div>
           <div style="font-size:9px;">${escapeHtml(line.description)}</div>
@@ -401,7 +458,8 @@ async function printInvoice(invoiceNo) {
         <td style="padding: 4px 0; text-align: center; vertical-align: top; font-size:11px;">${Number(line.qty)}</td>
         <td style="padding: 4px 0; text-align: right; vertical-align: top; font-size:11px;">${money(line.lineTotal)}</td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
 
     const serviceCharge = Number(invoice.serviceCharge);
     const discount = Number(invoice.discount);
@@ -703,6 +761,10 @@ async function loadItemsForCategory(categoryId) {
 function openModal(type, data = {}) {
   state.modal = { type, data };
 
+  if (type === "CREATE_ORDER" && !state.branch) {
+    return setToast("error", "Please select a specific Branch (A or B) to create an order.");
+  }
+
   if (type === "ADD_ITEM") {
     state.selectedCategoryId = "";
     state.itemLoading = false;
@@ -774,7 +836,12 @@ function layout() {
 
         <div class="w-full sm:w-auto sm:ml-auto flex items-center justify-center sm:justify-end gap-2">
           
-          <button id="btnNewOrder" class="${btnPrimary("flex-1 sm:flex-none px-4 lg:px-5 flex items-center justify-center gap-2")}">
+<button id="btnNewOrder" 
+            ${!state.branch ? 'disabled' : ''}
+            class="${!state.branch
+      ? "opacity-50 cursor-not-allowed flex-1 sm:flex-none px-4 lg:px-5 flex items-center justify-center gap-2 h-11 lg:h-12 rounded-xl bg-slate-900 text-white text-sm lg:text-base font-semibold"
+      : btnPrimary("flex-1 sm:flex-none px-4 lg:px-5 flex items-center justify-center gap-2")
+    }">
             ${icon("plus", "w-4 h-4 lg:w-5 lg:h-5")}
             New Order
           </button>
@@ -803,7 +870,7 @@ ${state.user?.role === 'ADMIN' ? `
     </div>
 
     <div class="max-w-screen-2xl mx-auto px-4 sm:px-6 py-5 grid grid-cols-12 gap-5">
-      <div class="col-span-12 lg:col-span-7">
+      <div class="col-span-12 lg:col-span-6">
         <div class="bg-white rounded-2xl shadow-sm border p-4 lg:p-5">
           <div class="rounded-2xl bg-sky-50/60 border border-sky-100 p-4 lg:p-5">
             <div class="mb-4 relative flex gap-2">
@@ -835,16 +902,21 @@ ${state.user?.role === 'ADMIN' ? `
 <div class="w-full sm:w-[10rem] lg:w-[6rem] shrink-0">
                 <div class="${uiLabelClass()}">Branch</div>
                 <div class="relative">
-                  <select id="branchSelect" class="${uiSelectClass()} appearance-none" 
+<select id="branchSelect" class="${uiSelectClass()} appearance-none" 
                     ${state.searchQuery ? 'disabled' : ''}
                     ${state.user?.role === 'STAFF' ? 'disabled' : ''} 
                   >
-                    ${(!state.user?.branch || state.user?.branch === 'A')
+                    ${state.user?.role === 'ADMIN'
+      ? `<option value="" ${state.branch === "" ? "selected" : ""}>All</option>`
+      : ''
+    }
+
+                    ${(!state.user?.branch || state.user?.branch === 'A' || state.user?.role === 'ADMIN')
       ? `<option value="A" ${state.branch === "A" ? "selected" : ""}>A</option>`
       : ''
     }
                     
-                    ${(!state.user?.branch || state.user?.branch === 'B')
+                    ${(!state.user?.branch || state.user?.branch === 'B' || state.user?.role === 'ADMIN')
       ? `<option value="B" ${state.branch === "B" ? "selected" : ""}>B</option>`
       : ''
     }
@@ -856,13 +928,14 @@ ${state.user?.role === 'ADMIN' ? `
                 </div>
               </div>
 
-              <div class="w-full sm:flex-1 lg:w-[12rem] shrink-0">
-                <div class="${uiLabelClass()}">Paid</div>
+                            <div class="w-full sm:flex-1 lg:w-[12rem] shrink-0">
+                <div class="${uiLabelClass()}">Status</div>
                 <div class="relative">
-                  <select id="paidSelect" class="${uiSelectClass()} appearance-none" ${state.searchQuery ? 'disabled' : ''}>
-                    <option value="" ${paidVal === "" ? "selected" : ""}>All</option>
-                    <option value="true" ${paidVal === "true" ? "selected" : ""}>Paid only</option>
-                    <option value="false" ${paidVal === "false" ? "selected" : ""}>Unpaid only</option>
+                  <select id="statusSelect" class="${uiSelectClass()} appearance-none" ${state.searchQuery ? 'disabled' : ''}>
+                    <option value="" ${statusVal === "" ? "selected" : ""}>All</option>
+                    ${STATUS_OPTIONS.map(
+      (s) => `<option value="${s}" ${statusVal === s ? "selected" : ""}>${s}</option>`
+    ).join("")}
                   </select>
                   <div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
                     ${icon("chevron-down", "w-4 h-4")}
@@ -871,13 +944,14 @@ ${state.user?.role === 'ADMIN' ? `
               </div>
 
               <div class="w-full sm:flex-1 lg:w-[12rem] shrink-0">
-                <div class="${uiLabelClass()}">Status</div>
+                <div class="${uiLabelClass()}">Paid</div>
                 <div class="relative">
-                  <select id="statusSelect" class="${uiSelectClass()} appearance-none" ${state.searchQuery ? 'disabled' : ''}>
-                    <option value="" ${statusVal === "" ? "selected" : ""}>All</option>
-                    ${STATUS_OPTIONS.map(
-      (s) => `<option value="${s}" ${statusVal === s ? "selected" : ""}>${s}</option>`
-    ).join("")}
+<select id="paidSelect" class="${uiSelectClass()} appearance-none" ${state.searchQuery ? 'disabled' : ''}>
+                    <option value="" ${paidVal === "" ? "selected" : ""}>All</option>
+                    <option value="NO INV" ${paidVal === "NO INV" ? "selected" : ""}>No Invoice</option>
+                    <option value="UNPAID" ${paidVal === "UNPAID" ? "selected" : ""}>Unpaid</option>
+                    <option value="PARTIAL" ${paidVal === "PARTIAL" ? "selected" : ""}>Partial</option>
+                    <option value="PAID" ${paidVal === "PAID" ? "selected" : ""}>Paid</option>
                   </select>
                   <div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
                     ${icon("chevron-down", "w-4 h-4")}
@@ -954,7 +1028,7 @@ ${state.user?.role === 'ADMIN' ? `
         </div>
       </div>
 
-      <div class="col-span-12 lg:col-span-5" id="details-panel-container">
+      <div class="col-span-12 lg:col-span-6" id="details-panel-container">
         <div class="bg-white rounded-2xl shadow-sm border p-4 lg:p-5 min-h-[260px]">
           ${detailsPanel()}
         </div>
@@ -990,7 +1064,7 @@ function detailsPanel() {
   // ✅ Check if invoice exists to toggle buttons
   const hasInvoice = !!invoiceNo;
 
-  // ✅ NEW: Speed Badge logic in Details Panel (SVG Icons)
+  // ✅ Speed Badge logic
   let speedBadge = "";
   if (latestInvoice) {
     if (latestInvoice.tatType === "ONE_DAY") {
@@ -1000,7 +1074,13 @@ function detailsPanel() {
     }
   }
 
-  // ✅ NEW: Paid Date logic with Time
+  // ✅ Delivery Badge logic
+  const hasDelivery = o.items?.some(it => it.itemCode === 'DLVR');
+  const deliveryBadge = hasDelivery
+    ? badge("DELIVERY", "purple", "home")
+    : "";
+
+  // ✅ Paid Date logic
   let paidString = "";
   if (latestInvoice?.paidAt) {
     const d = new Date(latestInvoice.paidAt);
@@ -1012,24 +1092,38 @@ function detailsPanel() {
       <div class="min-w-0">
         <div class="flex flex-wrap items-center gap-2">
           <span class="font-bold text-base lg:text-lg truncate">${escapeHtml(o.orderCode)}</span>
-          ${invoiceNo ? `<span class="bg-emerald-100 text-emerald-800 text-xs px-2 py-1 rounded font-mono font-bold">${escapeHtml(invoiceNo)}</span>` : ''}
+          ${invoiceNo ? `<span class="bg-emerald-100 text-emerald-800 text-xs px-2 py-1 rounded font-mono font-bold whitespace-nowrap">${escapeHtml(invoiceNo)}</span>` : ''}
         </div>
         <div class="text-xs lg:text-sm text-slate-500 mt-1">${escapeHtml(o.branch)} • ${new Date(o.createdAt).toLocaleString()}</div>
       </div>
-      <div class="flex gap-2 shrink-0">
-        ${speedBadge} 
+      <div class="flex gap-2 shrink-0 flex-wrap justify-end">
+        ${deliveryBadge} ${speedBadge} 
         ${badge(o.status, statusKind(o.status))}
         
-${(() => {
+        ${(() => {
       let label = "NO INV";
-      if (invoiceStatus === 'PAID') label = "PAID";
-      else if (invoiceStatus === 'FINAL') label = "UNPAID"; // Map FINAL -> UNPAID
-      else if (invoiceStatus === 'VOID') label = "VOID";
+      let color = "blue";
 
-      // Uses the helper you added: invoiceStatusKind
-      return badge(label, invoiceStatusKind(label));
+      if (invoiceStatus === 'PAID') {
+        label = "PAID";
+        color = "green";
+      } else if (invoiceStatus === 'FINAL') {
+        const paidAmt = Number(latestInvoice?.paidAmount || 0);
+        if (paidAmt > 0) {
+          label = "PARTIAL";
+          color = "orange";
+        } else {
+          label = "UNPAID";
+          color = "yellow";
+        }
+      } else if (invoiceStatus === 'VOID') {
+        label = "VOID";
+        color = "red";
+      }
+
+      return badge(label, color);
     })()}
-        </div>
+      </div>
     </div>
 
     <div class="mt-4 text-sm lg:text-base">
@@ -1047,10 +1141,7 @@ ${(() => {
         <div class="max-h-56 overflow-y-auto overflow-x-auto lg:overflow-x-hidden">
           <table class="w-full table-fixed text-sm lg:text-base min-w-[520px] lg:min-w-0">
             <colgroup>
-              <col class="w-[6rem]" />
-              <col />
-              <col class="w-[4.5rem]" />
-              <col class="w-[6rem]" />
+              <col class="w-[5.5rem]" /> <col /> <col class="w-[3.5rem]" /> <col class="w-[5.5rem]" /> <col class="w-[2.5rem]" /> 
             </colgroup>
 
             <thead class="bg-sky-50 text-slate-700">
@@ -1059,24 +1150,49 @@ ${(() => {
                 <th class="text-left p-2 lg:p-3">Name</th>
                 <th class="text-right p-2 lg:p-3">Qty</th>
                 <th class="text-right p-2 lg:p-3">Total</th>
+                <th class="p-2 lg:p-3"></th> 
               </tr>
             </thead>
 
             <tbody>
-              ${(o.items ?? [])
-      .map(
-        (it) => `
-                <tr class="border-t align-top">
-                  <td class="p-2 lg:p-3 font-mono text-xs lg:text-sm truncate">${escapeHtml(it.itemCode)}</td>
-                  <td class="p-2 lg:p-3 whitespace-normal break-words">${escapeHtml(it.itemName)}</td>
+              ${(o.items ?? []).map((it) => {
+
+      // ✅ NEW: Calculate TAT Badge Logic
+      let tatInfo = "";
+      // Exclude special items
+      if (!['DLVR', 'HNG', 'OI'].includes(it.itemCode) && it.expectedDays !== undefined) {
+        const d = Number(it.expectedDays);
+        // Format: (2 days) or (Same Day)
+        const dayText = d === 0 ? "Same Day" : `${d} day${d === 1 ? '' : 's'}`;
+        tatInfo = `<span title="Default turnaround time for this item" class="ml-1.5 cursor-help inline-block text-[10px] uppercase font-bold text-slate-400 border border-slate-200 rounded px-1 tracking-wide leading-tight">${dayText}</span>`;
+      }
+
+      return `
+                <tr class="border-t align-top group">
+                  <td class="p-2 lg:p-3 font-mono text-xs lg:text-sm truncate text-slate-500">${escapeHtml(it.itemCode)}</td>
+                  <td class="p-2 lg:p-3 whitespace-normal break-words font-medium text-slate-700">
+                    ${escapeHtml(it.itemName)}
+                    ${tatInfo} </td>
                   <td class="p-2 lg:p-3 text-right">${Number(it.qty ?? 0)}</td>
                   <td class="p-2 lg:p-3 text-right font-semibold">${money(it.lineTotal)}</td>
+                  
+                  <td class="p-2 lg:p-3 text-center align-top pt-3">
+                    ${!hasInvoice ? `
+                      <button onclick="window.deleteLineItem('${o.orderCode}', ${it.id})" 
+                              class="text-slate-300 hover:text-rose-500 transition p-1 rounded-md hover:bg-rose-50"
+                              title="Remove Item">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <polyline points="3 6 5 6 21 6"></polyline>
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                      </button>
+                    ` : ''}
+                  </td>
                 </tr>
-              `
-      )
-      .join("")}
+              `;
+    }).join("")}
               ${!o.items || o.items.length === 0
-      ? `<tr><td class="p-3 text-slate-500 text-sm" colspan="4">No items yet.</td></tr>`
+      ? `<tr><td class="p-3 text-slate-500 text-sm text-center" colspan="5">No items yet.</td></tr>`
       : ""
     }
             </tbody>
@@ -1139,7 +1255,7 @@ ${(() => {
          Print Tags
       </button>
 
-<button id="btnPayInvoice"
+      <button id="btnPayInvoice" 
         class="${btnSuccess(`w-full sm:col-span-2 flex items-center justify-center gap-2 ${canPay ? "" : "opacity-50 pointer-events-none"}`)}">
         ${icon("pay", "w-4 h-4 lg:w-5 lg:h-5")}
         Pay invoice
@@ -1179,6 +1295,10 @@ function confirmUi() {
     ? "bg-rose-600 hover:bg-rose-700 text-white shadow-rose-200"
     : "bg-slate-900 hover:bg-slate-800 text-white";
 
+  // ✅ Use custom text if provided, otherwise default based on type
+  const defaultText = isDanger ? 'Yes, Cancel Order' : 'Confirm';
+  const buttonLabel = state.confirm.btnText || defaultText;
+
   return `
     <div class="fixed top-6 left-1/2 -translate-x-1/2 z-[110] animate-in fade-in slide-in-from-top-4 duration-200">
       <div class="bg-white px-6 py-5 rounded-2xl shadow-2xl border border-slate-200 flex flex-col items-center gap-4 min-w-[320px]">
@@ -1190,7 +1310,7 @@ function confirmUi() {
             No, Keep it
           </button>
           <button onclick="window.resolveConfirm(true)" class="flex-1 h-9 rounded-lg text-xs font-bold transition shadow-md ${btnClass}">
-            ${isDanger ? 'Yes, Cancel Order' : 'Confirm'}
+            ${buttonLabel}
           </button>
         </div>
       </div>
@@ -1293,6 +1413,24 @@ function modalAddItem({ orderCode }) {
   const items = state.categoryItems || [];
   const selected = state.selectedItemCode;
 
+  // ✅ Check if the selected item is one that needs custom inputs
+  const isCustomItem = selected === 'OI' || selected === 'DLVR';
+
+  // ✅ Dynamic Labels based on selection
+  const customLabel = selected === 'DLVR' ? 'Delivery Address & Charge' : 'Other Item Details';
+  const namePlaceholder = selected === 'DLVR' ? 'Enter Delivery Address...' : 'e.g. Rug / Car Cover';
+  const priceLabel = selected === 'DLVR' ? 'Delivery Charge (Rs.)' : 'Unit Price (Rs.)';
+
+  // ✅ AUTO-FILL LOGIC: 
+  // If Delivery is selected, try to pull the address from the current order object
+  let defaultDesc = "";
+  if (selected === 'DLVR') {
+    // Use the global state.selectedOrder to find the customer address
+    if (state.selectedOrder && state.selectedOrder.customer?.address) {
+      defaultDesc = state.selectedOrder.customer.address;
+    }
+  }
+
   return `
     ${modalHeader("Add Item")}
     <div class="text-xs text-slate-500 mb-3">Order: <b>${escapeHtml(orderCode)}</b></div>
@@ -1317,30 +1455,55 @@ function modalAddItem({ orderCode }) {
       <option value="">
         ${state.selectedCategoryId ? (state.itemLoading ? "Loading items..." : "Select item") : "Select category first"}
       </option>
-${!state.itemLoading
+      ${!state.itemLoading
       ? items
         .map((it) => {
-          const tat = tatLabel(it.defaultTatDays); // <-- uses defaultTatDays already in items
+          // ✅ Special Items (OI & DLVR): Just Code - Name
+          if (it.code === 'OI' || it.code === 'DLVR') {
+            return `<option value="${escapeHtml(it.code)}" ${selected === it.code ? "selected" : ""}>
+                ${escapeHtml(it.code)} - ${escapeHtml(it.name)}
+             </option>`;
+          }
+
+          // ✅ Standard Items: Code - Name (Price) 
+          // REMOVED the TAT text from inside the option as requested
           const pricePart = it.price != null ? ` (Rs. ${money(it.price)})` : "";
           return `<option value="${escapeHtml(it.code)}" ${selected === it.code ? "selected" : ""}>
-        ${escapeHtml(it.code)} - ${escapeHtml(it.name)} (${escapeHtml(tat)})${pricePart}
-      </option>`;
+            ${escapeHtml(it.code)} - ${escapeHtml(it.name)}${pricePart}
+          </option>`;
         })
         .join("")
       : ""
     }
-
     </select>
 
     ${(() => {
       const sel = getSelectedCatalogItem();
-      if (!sel) return "";
+      // ✅ LOGIC UPDATE: Hide "Default turnaround" text for:
+      // 1. No selection
+      // 2. Other Item (OI) - has no standard time
+      // 3. Delivery (DLVR) - is a service
+      // 4. Hanger (HNG) - is an instant product
+      if (!sel || sel.code === 'OI' || sel.code === 'DLVR' || sel.code === 'HNG') return "";
+
       return `<div class="text-xs text-slate-500 mt-2">
-    Default turnaround: <b>${escapeHtml(tatLabel(sel.defaultTatDays))}</b>
-  </div>`;
+        Default turnaround: <b>${escapeHtml(tatLabel(sel.defaultTatDays))}</b>
+      </div>`;
     })()}
 
-    <div class="mt-3">
+    <div id="customItemFields" class="${isCustomItem ? 'block' : 'hidden'} mt-3 p-3 bg-amber-50 rounded-xl border border-amber-200">
+        <div class="text-xs font-bold text-amber-800 uppercase mb-2">${customLabel}</div>
+        
+        <label class="block text-xs text-slate-600 mb-1">
+            ${selected === 'DLVR' ? 'Delivery Address' : 'Description / Name'}
+        </label>
+        <input id="customName" type="text" value="${escapeHtml(defaultDesc)}" placeholder="${namePlaceholder}" class="${uiTextInputClass()} mb-2 h-10"/>
+        
+        <label class="block text-xs text-slate-600 mb-1">${priceLabel}</label>
+        <input id="customPrice" type="number" placeholder="0.00" class="${uiTextInputClass()} h-10"/>
+    </div>
+
+    <div class="mt-3 ${selected === 'DLVR' ? 'hidden' : ''}">
       <label class="block text-sm text-slate-600 mb-1">Qty</label>
       <input id="itemQty" type="number" min="1" value="1" class="${uiTextInputClass()}"/>
     </div>
@@ -1407,22 +1570,37 @@ function modalInvoice({ orderCode }) {
   `;
 }
 
-function modalPay({ invoiceNo, total }) {
+function modalPay({ invoiceNo, total, paid, balance }) {
   return `
     ${modalHeader("Pay Invoice")}
-    <div class="text-sm text-slate-600 mb-3">
+    <div class="text-sm text-slate-600 mb-4">
       Invoice: <b>${escapeHtml(invoiceNo)}</b>
     </div>
 
-    <label class="block text-sm text-slate-600 mb-1">Payment method</label>
+    <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-5 space-y-2 text-sm">
+        <div class="flex justify-between text-slate-500">
+            <span>Invoice Total:</span>
+            <span>${money(total)}</span>
+        </div>
+        <div class="flex justify-between text-orange-600">
+            <span>Already Paid:</span>
+            <span>- ${money(paid)}</span>
+        </div>
+        <div class="flex justify-between font-bold text-slate-800 border-t border-slate-300 pt-2 mt-1">
+            <span>Remaining Balance:</span>
+            <span>${money(balance)}</span>
+        </div>
+    </div>
+
+    <label class="block text-sm text-slate-600 mb-1">Payment Method</label>
     <select id="paymentMethod" class="${uiSelectClass()}">
       ${PAYMENT_METHODS.map((m) => `<option value="${m}">${m}</option>`).join("")}
     </select>
 
-    <label class="block text-sm text-slate-600 mb-1 mt-3">Paid amount</label>
-    <input id="paidAmount" type="number" min="0" value="${Number(total ?? 0)}" class="${uiTextInputClass()}"/>
+    <label class="block text-sm text-slate-600 mb-1 mt-4">Amount Paying Now</label>
+    <input id="paidAmount" type="number" min="0" value="${Number(balance ?? 0)}" class="${uiTextInputClass()}"/>
 
-    <button id="confirmPay" class="mt-4 w-full h-11 px-4 rounded-xl bg-emerald-600 text-white font-semibold hover:opacity-95 cursor-pointer">
+    <button id="confirmPay" class="mt-5 w-full h-11 px-4 rounded-xl bg-emerald-600 text-white font-semibold hover:opacity-95 cursor-pointer">
       Confirm Payment
     </button>
   `;
@@ -1487,7 +1665,12 @@ function attachHandlers() {
           name: res.user.name || res.user.role
         };
 
-        state.branch = res.user.branch || "A"; // Force branch setting
+        // ✅ FIX: If Admin, set branch to empty (All). Staff gets their assigned branch.
+        if (res.user.role === 'ADMIN') {
+          state.branch = "";
+        } else {
+          state.branch = res.user.branch || "A";
+        }
         state.modal = null; // Close modal
 
         render();
@@ -1510,7 +1693,7 @@ function attachHandlers() {
   document.getElementById("btnRefresh")?.addEventListener("click", async () => {
     // 1. Reset State
     state.searchQuery = "";
-    state.branch = "A";
+    state.branch = state.user?.role === 'ADMIN' ? "" : (state.user?.branch || "A");
     state.paid = "";
     state.status = "";
     state.yymmdd = yymmddFromDate(new Date()); // Today
@@ -1677,10 +1860,21 @@ function attachHandlers() {
         ? [...o.invoices].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0]
         : null;
 
-    if (!latest?.invoiceNo) return setToast("error", "No invoice found. Create invoice first.");
+    if (!latest?.invoiceNo) return setToast("error", "No invoice found.");
     if (latest.status === "PAID") return setToast("error", "Invoice already PAID.");
 
-    openModal("PAY", { invoiceNo: latest.invoiceNo, total: o.total ?? latest.total ?? 0 });
+    // ✅ Calculate values for the modal
+    const currentPaid = Number(latest.paidAmount || 0);
+    const total = Number(o.total || latest.total || 0);
+    const balance = Math.max(0, total - currentPaid);
+
+    // ✅ Pass all details to the new modal
+    openModal("PAY", {
+      invoiceNo: latest.invoiceNo,
+      total: total,
+      paid: currentPaid,
+      balance: balance
+    });
   });
 
   document.getElementById("modalClose")?.addEventListener("click", closeModal);
@@ -1783,15 +1977,13 @@ function attachHandlers() {
       state.selectedCategoryId = e.target.value || "";
       state.categoryItems = [];
       state.selectedItemCode = "";
-      render();
-
-      if (state.selectedCategoryId) {
-        await loadItemsForCategory(state.selectedCategoryId);
-      }
+      render(); // Refresh to clear item selection
+      if (state.selectedCategoryId) await loadItemsForCategory(state.selectedCategoryId);
     });
 
     document.getElementById("itemSelect")?.addEventListener("change", (e) => {
       state.selectedItemCode = e.target.value || "";
+      render(); // ✅ Re-render to show/hide the Yellow Box
     });
 
     document.getElementById("confirmAddItem")?.addEventListener("click", async () => {
@@ -1803,8 +1995,22 @@ function attachHandlers() {
       if (!itemCode) return setToast("error", "Select an item");
       if (qty <= 0) return setToast("error", "Qty must be > 0");
 
+      let payload = { itemCode, qty };
+
+      // ✅ Validation for Custom Items (OI or DLVR)
+      if (itemCode === 'OI' || itemCode === 'DLVR') {
+        const cName = document.getElementById("customName").value.trim();
+        const cPrice = Number(document.getElementById("customPrice").value);
+
+        if (!cName) return setToast("error", "Please enter a Description/Name");
+        if (!cPrice || cPrice <= 0) return setToast("error", "Please enter a valid Price");
+
+        payload.customName = cName;
+        payload.customPrice = cPrice;
+      }
+
       closeModal();
-      await addItemToOrder(orderCode, itemCode, qty);
+      await addItemToOrder(orderCode, payload);
     });
   }
 
@@ -1862,12 +2068,30 @@ function attachHandlers() {
   }
 }
 
+window.deleteLineItem = async (orderCode, itemId) => {
+  // ✅ Custom red button text "Yes, Remove"
+  if (!await window.confirmAction("Remove this item from the order?", 'danger', "Yes, Remove")) return;
+
+  try {
+    // ✅ FIX: Use apiDelete and remove '/delete' from the URL
+    await apiDelete(`/api/orders/${orderCode}/items/${itemId}`);
+
+    setToast("success", "Item removed");
+    await loadOrderDetails(orderCode); // Refresh details
+    await loadOrdersBoard(); // Refresh totals on board
+  } catch (e) {
+    setToast("error", e.message || "Failed to delete item");
+  }
+};
+
 // ✅ NEW: Promise-based Confirmation with Type
-window.confirmAction = (msg, type = 'normal') => {
+// ✅ FIXED: Added btnText parameter with default null
+window.confirmAction = (msg, type = 'normal', btnText = null) => {
   return new Promise((resolve) => {
     state.confirm = {
       msg,
-      type, // 'normal' or 'danger'
+      type,
+      btnText, // Now it is defined
       resolve: (val) => {
         state.confirm = null;
         render();
