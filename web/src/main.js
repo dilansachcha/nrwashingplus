@@ -564,8 +564,7 @@ async function printInvoice(invoiceNo) {
         <div class="footer">
           Thank you! Come Again.<br>
           (No refunds after wash)<br>
-          Software by DS44
-        </div>
+          Software by dilansachintha.xyz
         <script>
            window.onload = function() { window.print(); window.onafterprint = function(){ window.close(); } };
         </script>
