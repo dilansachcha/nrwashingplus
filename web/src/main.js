@@ -12,15 +12,11 @@ const STATUS_OPTIONS = [
   "CANCELLED",
 ];
 
-// ✅ must match Prisma PaymentMethod enum
 const PAYMENT_METHODS = ["CASH", "CARD", "BANK_TRANSFER", "OTHER"];
 
-// ✅ invoice-level tat types
 const INVOICE_TAT_TYPES = ["NORMAL", "ONE_DAY", "EXPRESS"];
 
-// ---------------------------
 // State
-// ---------------------------
 const state = {
   // Auth State
   user: localStorage.getItem('userRole') ? {
@@ -48,7 +44,7 @@ const state = {
   categoriesLoading: false,
   selectedCategoryId: "",
 
-  // ✅ simple category -> items dropdown state
+  // simple category 
   itemLoading: false,
   categoryItems: [],
   selectedItemCode: "",
@@ -59,9 +55,7 @@ const state = {
   searchQuery: "",
 };
 
-// ---------------------------
 // Helpers
-// ---------------------------
 function money(n) {
   const x = Number(n ?? 0);
   return x.toFixed(2);
@@ -98,7 +92,7 @@ function dateInputValueFromYYMMDD(yymmdd) {
   return `20${yy}-${mm}-${dd}`;
 }
 
-// ✅ IMPORTANT: must escape quotes too because we use it in value="..."
+//must escape quotes too because we use it in value="..."
 function escapeHtml(s) {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -108,7 +102,7 @@ function escapeHtml(s) {
     .replace(/'/g, "&#39;");
 }
 
-// ✅ Debounce helper for phone search
+//Debounce helper for phone search
 function debounce(func, wait) {
   let timeout;
   return function (...args) {
@@ -143,7 +137,7 @@ function statusKind(s) {
   return "gray";
 }
 
-// ✅ Logic to map backend status to UI Label
+//Logic to map backend status to UI Label
 function getPaymentState(order) {
   const s = order.invoiceStatus;
   if (!s || s === 'NONE') return 'NO INV';
@@ -154,14 +148,14 @@ function getPaymentState(order) {
   return s;
 }
 
-// ✅ Color mapping
+//Color mapping
 function invoiceStatusKind(status) {
   switch (status) {
     case 'PAID': return 'green';
     case 'UNPAID': return 'yellow';
     case 'PARTIAL': return 'orange';
     case 'FINAL': return 'yellow';
-    case 'NO INV': return 'blue';    // ✅ Blue for No Invoice
+    case 'NO INV': return 'blue';    //Blue for No Invoice
     case 'NONE': return 'blue';
     case 'VOID': return 'red';
     default: return 'gray';
@@ -191,13 +185,11 @@ function setLoading(v) {
 function qs(params) {
   const u = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
-    // ✅ Allow empty string ONLY for 'branch' to support "All" option
     if (k === 'branch' && v === "") {
       u.set(k, "");
       return;
     }
 
-    // Standard filtering for other params
     if (v !== undefined && v !== null && String(v).trim() !== "") u.set(k, String(v));
   });
   return u.toString();
@@ -207,9 +199,7 @@ function getSelectedCatalogItem() {
   return (state.categoryItems || []).find((x) => x.code === state.selectedItemCode) || null;
 }
 
-// ---------------------------
-// Inline icons (SVG)
-// ---------------------------
+//icons
 function icon(name, cls = "w-4 h-4") {
   const common = `class="${cls}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"`;
 
@@ -222,19 +212,19 @@ function icon(name, cls = "w-4 h-4") {
       return `<svg ${common}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>`;
     case "invoice":
       return `<svg ${common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
-    case "pay": // Generic Banknote (Currency Neutral)
+    case "pay":
       return `<svg ${common}><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>`;
     case "home":
       return `<svg ${common}><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`;
-    case "file-text": // Note
+    case "file-text":
       return `<svg ${common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
-    case "check-circle": // Paid
+    case "check-circle":
       return `<svg ${common}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
-    case "alert-circle": // Pending
+    case "alert-circle":
       return `<svg ${common}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
-    case "zap": // Express
+    case "zap":
       return `<svg ${common}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`;
-    case "clock": // One Day
+    case "clock":
       return `<svg ${common}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
     case "search":
       return `<svg ${common}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
@@ -247,18 +237,15 @@ function icon(name, cls = "w-4 h-4") {
   }
 }
 
-// ---------------------------
 // Backend calls
-// ---------------------------
 async function loadOrdersBoard() {
   try {
     setLoading(true);
 
-    // 1. Fetch ALL orders for the criteria (date/branch/status)
-    // We REMOVE 'paid' from the API query so we get everything
+    //Fetching
     const query = qs({
       branch: state.branch,
-      // paid: state.paid, // ❌ Don't send this to backend anymore
+      // paid: state.paid, // not sending back
       status: state.status,
       yymmdd: state.yymmdd,
     });
@@ -266,8 +253,7 @@ async function loadOrdersBoard() {
     const data = await apiGet(`/api/orders/today?${query}`);
     let allOrders = Array.isArray(data) ? data : [];
 
-    // 2. Perform Frontend Filtering for Payment Status
-    // This allows us to filter by computed properties like 'PARTIAL'
+    //UI Filtering
     if (state.paid) {
       allOrders = allOrders.filter(o => {
         // Re-use the exact same logic we use for badges
@@ -299,9 +285,9 @@ async function createNewOrder(payload) {
       customerName: payload.name,
       customerPhone: payload.phone,
       customerAddress: payload.address,
-      customerNotes: payload.customerNotes, // Note: backend calls it 'customerNotes'    
-      notes: payload.notes, // Order notes
-      yymmdd: payload.yymmdd, // ✅ SEND THE DATE
+      customerNotes: payload.customerNotes,
+      notes: payload.notes,
+      yymmdd: payload.yymmdd,
     });
     setToast("success", `Created: ${res.orderCode}`);
 
@@ -318,9 +304,6 @@ async function lookupCustomerByPhone(phone) {
     const res = await apiGet(`/api/orders?q=${encodeURIComponent(phone)}`);
 
     if (Array.isArray(res) && res.length > 0) {
-
-      // ✅ FIX: Find the first match that is NOT archived
-      // We don't just look at [0], we look for the first valid one.
       const match = res.find(item => {
         // Check flattened flag (from searchOrders)
         if (item.isCustomerArchived === true) return false;
@@ -825,7 +808,7 @@ function layout() {
     ${toastUi()}
     ${confirmUi()} ${modalUi()}
 
-<div class="border-b bg-white">
+    <div class="border-b bg-white">
       <div class="max-w-screen-2xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center gap-4 sm:gap-3">
         
         <div class="w-full sm:w-auto flex flex-col items-center sm:items-start text-center sm:text-left">
@@ -835,7 +818,7 @@ function layout() {
 
         <div class="w-full sm:w-auto sm:ml-auto flex items-center justify-center sm:justify-end gap-2">
           
-<button id="btnNewOrder" 
+          <button id="btnNewOrder" 
             ${!state.branch ? 'disabled' : ''}
             class="${!state.branch
       ? "opacity-50 cursor-not-allowed flex-1 sm:flex-none px-4 lg:px-5 flex items-center justify-center gap-2 h-11 lg:h-12 rounded-xl bg-slate-900 text-white text-sm lg:text-base font-semibold"
@@ -850,7 +833,7 @@ function layout() {
             Refresh
           </button>
 
-${state.user?.role === 'ADMIN' ? `
+          ${state.user?.role === 'ADMIN' ? `
             <a href="/admin.html" class="flex-1 sm:flex-none h-11 lg:h-12 px-4 lg:px-5 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 text-sm lg:text-base font-semibold hover:bg-indigo-100 hover:border-indigo-300 transition flex items-center justify-center gap-2">
               <svg class="w-4 h-4 lg:w-5 lg:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
@@ -860,7 +843,7 @@ ${state.user?.role === 'ADMIN' ? `
             </a>
           ` : ''}
 
-<button id="btnLogout" class="h-11 px-3 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition flex flex-col items-end justify-center leading-tight">
+          <button id="btnLogout" class="h-11 px-3 rounded-xl border border-slate-200 text-slate-600 text-xs font-bold hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition flex flex-col items-end justify-center leading-tight">
             <span>${state.user?.name || state.user?.role || 'GUEST'}</span>
             <span class="font-normal text-[10px] opacity-75">Sign Out</span>
           </button>
@@ -869,9 +852,11 @@ ${state.user?.role === 'ADMIN' ? `
     </div>
 
     <div class="max-w-screen-2xl mx-auto px-4 sm:px-6 py-5 grid grid-cols-12 gap-5">
+      
       <div class="col-span-12 lg:col-span-6">
         <div class="bg-white rounded-2xl shadow-sm border p-4 lg:p-5">
           <div class="rounded-2xl bg-sky-50/60 border border-sky-100 p-4 lg:p-5">
+            
             <div class="mb-4 relative flex gap-2">
               <div class="relative flex-1">
                  <input id="orderSearch" type="text" placeholder="Global Search (Order #, Name, Phone)...Overrides filters below" 
@@ -883,9 +868,9 @@ ${state.user?.role === 'ADMIN' ? `
               <button id="btnTriggerSearch" class="${btnGhost("px-4")}">Search</button>
             </div>
 
-<div class="flex flex-wrap lg:flex-nowrap gap-3 lg:gap-4 items-end ${state.searchQuery ? 'opacity-50 pointer-events-none' : ''}">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-nowrap gap-3 lg:gap-4 items-end ${state.searchQuery ? 'opacity-50 pointer-events-none' : ''}">
               
-              <div class="w-full lg:w-[15rem] shrink-0">
+              <div class="w-full lg:w-[15rem]">
                 <div class="${uiLabelClass()}">Date</div>
                 <div class="relative">
                   <input id="dateSelect" type="date"
@@ -898,10 +883,10 @@ ${state.user?.role === 'ADMIN' ? `
                 </div>
               </div>
 
-<div class="w-full sm:w-[10rem] lg:w-[6rem] shrink-0">
+              <div class="w-full lg:w-[6rem]">
                 <div class="${uiLabelClass()}">Branch</div>
                 <div class="relative">
-<select id="branchSelect" class="${uiSelectClass()} appearance-none" 
+                  <select id="branchSelect" class="${uiSelectClass()} appearance-none" 
                     ${state.searchQuery ? 'disabled' : ''}
                     ${state.user?.role === 'STAFF' ? 'disabled' : ''} 
                   >
@@ -909,25 +894,22 @@ ${state.user?.role === 'ADMIN' ? `
       ? `<option value="" ${state.branch === "" ? "selected" : ""}>All</option>`
       : ''
     }
-
                     ${(!state.user?.branch || state.user?.branch === 'A' || state.user?.role === 'ADMIN')
       ? `<option value="A" ${state.branch === "A" ? "selected" : ""}>A</option>`
       : ''
     }
-                    
                     ${(!state.user?.branch || state.user?.branch === 'B' || state.user?.role === 'ADMIN')
       ? `<option value="B" ${state.branch === "B" ? "selected" : ""}>B</option>`
       : ''
     }
                   </select>
-                  
                   <div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500">
                      ${state.user?.role === 'STAFF' ? icon("lock", "w-3 h-3") : icon("chevron-down", "w-4 h-4")}
                   </div>
                 </div>
               </div>
 
-                            <div class="w-full sm:flex-1 lg:w-[12rem] shrink-0">
+              <div class="w-full lg:w-[12rem]">
                 <div class="${uiLabelClass()}">Status</div>
                 <div class="relative">
                   <select id="statusSelect" class="${uiSelectClass()} appearance-none" ${state.searchQuery ? 'disabled' : ''}>
@@ -942,10 +924,10 @@ ${state.user?.role === 'ADMIN' ? `
                 </div>
               </div>
 
-              <div class="w-full sm:flex-1 lg:w-[12rem] shrink-0">
+              <div class="w-full lg:w-[12rem]">
                 <div class="${uiLabelClass()}">Paid</div>
                 <div class="relative">
-<select id="paidSelect" class="${uiSelectClass()} appearance-none" ${state.searchQuery ? 'disabled' : ''}>
+                  <select id="paidSelect" class="${uiSelectClass()} appearance-none" ${state.searchQuery ? 'disabled' : ''}>
                     <option value="" ${paidVal === "" ? "selected" : ""}>All</option>
                     <option value="NO INV" ${paidVal === "NO INV" ? "selected" : ""}>No Invoice</option>
                     <option value="UNPAID" ${paidVal === "UNPAID" ? "selected" : ""}>Unpaid</option>
@@ -959,14 +941,13 @@ ${state.user?.role === 'ADMIN' ? `
               </div>
 
             </div>
-
-<div class="mt-3 flex flex-row items-center justify-between gap-2">
-<div class="text-[12px] lg:text-sm text-slate-600">
-  ${state.searchQuery
+            <div class="mt-3 flex flex-row items-center justify-between gap-2">
+              <div class="text-[12px] lg:text-sm text-slate-600">
+                ${state.searchQuery
       ? `<span class="text-indigo-600 font-bold">Search Results for: "${escapeHtml(state.searchQuery)}"</span>`
       : `Showing: <b class="text-slate-800">${state.yymmdd}</b>`
     }
-</div>
+              </div>
               <div class="text-sm lg:text-base text-slate-800">
                 <b>${state.orders.length}</b> orders
               </div>
@@ -990,9 +971,7 @@ ${state.user?.role === 'ADMIN' ? `
       .map((o) => {
         const selected = o.orderCode === state.selectedOrderCode;
 
-        // ✅ FIXED: Use 'o.tatType' directly (since backend flattens it)
         let listSpeedIcon = "";
-
         if (o.tatType === 'EXPRESS') {
           listSpeedIcon = `<span class="text-red-600 mr-1 inline-flex items-center p-1" title="Express">${icon('zap', 'w-3 h-3')}</span>`;
         } else if (o.tatType === 'ONE_DAY') {
@@ -1000,13 +979,13 @@ ${state.user?.role === 'ADMIN' ? `
         }
 
         return `
-            <tr data-order="${escapeHtml(o.orderCode)}"
-                class="border-b hover:bg-slate-50 cursor-pointer ${selected ? "bg-slate-100" : ""}">
-              <td class="py-3 px-2 font-semibold">
-                  <div class="flex items-center">
-                    ${escapeHtml(o.orderCode)} ${listSpeedIcon}
-                  </div>
-              </td>
+                      <tr data-order="${escapeHtml(o.orderCode)}"
+                          class="border-b hover:bg-slate-50 cursor-pointer ${selected ? "bg-slate-100" : ""}">
+                        <td class="py-3 px-2 font-semibold">
+                            <div class="flex items-center">
+                              ${escapeHtml(o.orderCode)} ${listSpeedIcon}
+                            </div>
+                        </td>
                         <td class="py-3 px-2">
                           <div class="font-medium">${escapeHtml(o.customerName ?? "-")}</div>
                           <div class="text-xs lg:text-sm text-slate-500">${escapeHtml(o.customerPhone ?? "")}</div>
@@ -1015,8 +994,8 @@ ${state.user?.role === 'ADMIN' ? `
                         <td class="py-3 px-2 font-semibold">${money(o.total)}</td>
                         <td class="py-3 px-2">${badge(o.status, statusKind(o.status))}</td>
                         <td class="py-3 px-2">
-  ${badge(getPaymentState(o), invoiceStatusKind(getPaymentState(o)))}
-</td>
+                          ${badge(getPaymentState(o), invoiceStatusKind(getPaymentState(o)))}
+                        </td>
                       </tr>
                     `;
       })
@@ -1033,6 +1012,7 @@ ${state.user?.role === 'ADMIN' ? `
         </div>
       </div>
     </div>
+
     <button id="btnBackToTop" 
             class="fixed bottom-6 right-6 bg-slate-800 text-white p-3 rounded-full shadow-lg hover:bg-slate-700 transition-opacity opacity-50 hover:opacity-100 z-50"
             onclick="window.scrollTo({top: 0, behavior: 'smooth'});">
