@@ -61,7 +61,7 @@ Instead of relying on expensive managed services, this application is deployed u
 
 ---
 
-## 🛠️ Niche UI/UX Engineering Details
+## 🛠️ Niche UI/UX Details
 
 * **Transaction Safety:** Utilized Prisma's `$transaction` blocks on the backend. When creating an order with 10 line items, the system ensures either *all* 10 items save successfully, or *none* do, preventing corrupted "half-orders" if a network drop occurs mid-save.
 * **Responsive Grid Fixes:** Engineered the frontend using CSS Grid (`grid-cols-1 sm:grid-cols-2 lg:flex`) to ensure complex filter dropdowns (Date, Branch, Status, Paid) stack perfectly on portrait-oriented tablets without overlapping.
